@@ -20,9 +20,15 @@ for row in data:
     except:
         print("Comment Frame")
 
+#Plot the data in 3D, noting that the x and y axis should have the same scale
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
-ax.scatter(x_data, y_data, z_data, c='r', marker='o')
+
+#Plot the data as a line in space
+ax.plot(x_data, y_data, z_data, label='Flight Path')
+
+ax.set_xlim3d(-100, 100)
+ax.set_ylim3d(-100, 100)
 
 ax.set_xlabel('Meters East of Launch Site')
 ax.set_ylabel('Meter North of Launch Site')
