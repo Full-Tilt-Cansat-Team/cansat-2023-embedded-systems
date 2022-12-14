@@ -1,0 +1,11 @@
+[package]
+name = "rust-testing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+panic-halt = "0.2.0"
+rp2040-hal = "0.7.0"
+cortex-m-rt = "0.7.2"
+embedded-hal = "0.2.7"
+rp2040-boot2 = "0.2.1"
