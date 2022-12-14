@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+//Make sure to halt on panic
 use panic_halt as _;
 
 //Grab the HAL and our associated drivers
@@ -41,43 +42,84 @@ enum FlightState {
     PostFlight,
 }
 
-//Spinlocked global telemetry fields
+//Spinlocked structure to consolidate all of our telemetry fields
 #[allow(dead_code)]
-static mut TEAM_ID: u32 = 0;
-#[allow(dead_code)]
-static mut MISSION_TIME_HOURS: u32 = 0;
-#[allow(dead_code)]
-static mut MISSION_TIME_MINUTES: u32 = 0;
-#[allow(dead_code)]
-static mut MISSION_TIME_SECONDS: f32 = 0.0;
-#[allow(dead_code)]
-static mut PACKET_COUNT: u32 = 0;
-#[allow(dead_code)]
-static mut CONTAINER_MODE: ContainerMode = ContainerMode::Flight;
-#[allow(dead_code)]
-static mut MISSION_STATE: FlightState = FlightState::PreFlight;
-#[allow(dead_code)]
-static mut ALTITUDE: f32 = 0.0;
-#[allow(dead_code)]
-static mut HEAT_SHIELD_DEPLOYMENT_STATE: DeploymentState = DeploymentState::Undeployed;
-#[allow(dead_code)]
-static mut TEMPERATURE: f32 = 0.0;
-#[allow(dead_code)]
-static mut VOLTAGE: f32 = 0.0;
-#[allow(dead_code)]
-static mut GPS_TIME_HOURS: u32 = 0;
-#[allow(dead_code)]
-static mut GPS_TIME_MINUTES: u32 = 0;
-#[allow(dead_code)]
-static mut GPS_TIME_SECONDS: f32 = 0.0;
-#[allow(dead_code)]
-static mut GPS_LATITUDE: f32 = 0.0;
-#[allow(dead_code)]
-static mut GPS_LONGITUDE: f32 = 0.0;
-#[allow(dead_code)]
-static mut GPS_SAT_COUNT: u32 = 0;
-#[allow(dead_code)]
-static mut CMD_ECHO: [u32; 32] = [0; 32];
+struct Telemetry {
+    team_id: u32,
+    mission_time_hours: u32,
+    mission_time_minutes: u32,
+    mission_time_seconds: f32,
+    packet_count: u32,
+    container_mode: ContainerMode,
+    mission_state: FlightState,
+    altitude: f32,
+    heat_shield_deployment_state: DeploymentState,
+    parachute_deployment_state: DeploymentState,
+    mast_deployment_state: DeploymentState,
+    temperature: f32,
+    voltage: f32,
+    gps_time_hours: u32,
+    gps_time_minutes: u32,
+    gps_time_seconds: f32,
+    gps_latitude: f32,
+    gps_longitude: f32,
+    gps_sat_count: u32,
+    cmd_echo: [u32; 32],
+}
+
+static mut TELEMETRY: Telemetry = Telemetry {
+    team_id: 0,
+    mission_time_hours: 0,
+    mission_time_minutes: 0,
+    mission_time_seconds: 0.0,
+    packet_count: 0,
+    container_mode: ContainerMode::Flight,
+    mission_state: FlightState::PreFlight,
+    altitude: 0.0,
+    heat_shield_deployment_state: DeploymentState::Undeployed,
+    parachute_deployment_state: DeploymentState::Undeployed,
+    mast_deployment_state: DeploymentState::Undeployed,
+    temperature: 0.0,
+    voltage: 0.0,
+    gps_time_hours: 0,
+    gps_time_minutes: 0,
+    gps_time_seconds: 0.0,
+    gps_latitude: 0.0,
+    gps_longitude: 0.0,
+    gps_sat_count: 0,
+    cmd_echo: [0; 32],
+};
+
+impl Telemetry {
+    //Function to hang until the spinlock is available
+    fn claim (&mut self) {
+        let _lock = Spinlock1::claim();
+    }
+    //Function to reset the telemetry to hardcoded initial values
+    fn reset(&mut self) {
+        self.claim();
+        self.team_id = 0;
+        self.mission_time_hours = 0;
+        self.mission_time_minutes = 0;
+        self.mission_time_seconds = 0.0;
+        self.packet_count = 0;
+        self.container_mode = ContainerMode::Flight;
+        self.mission_state = FlightState::PreFlight;
+        self.altitude = 0.0;
+        self.heat_shield_deployment_state = DeploymentState::Undeployed;
+        self.parachute_deployment_state = DeploymentState::Undeployed;
+        self.mast_deployment_state = DeploymentState::Undeployed;
+        self.temperature = 0.0;
+        self.voltage = 0.0;
+        self.gps_time_hours = 0;
+        self.gps_time_minutes = 0;
+        self.gps_time_seconds = 0.0;
+        self.gps_latitude = 0.0;
+        self.gps_longitude = 0.0;
+        self.gps_sat_count = 0;
+        self.cmd_echo = [0; 32];
+    } 
+}
 
 //Function to update the LED state
 fn blink_led() {
@@ -88,11 +130,11 @@ fn blink_led() {
     //the compiler from yelling at us for modifying this
     //from multiple cores
     unsafe {
-        if TEAM_ID == 0 {
-            TEAM_ID = 1;
+        if TELEMETRY.team_id == 0 {
+            TELEMETRY.team_id = 1;
         }
         else {
-            TEAM_ID = 0;
+            TELEMETRY.team_id = 0;
         }
     }
 }
@@ -120,7 +162,7 @@ fn core1_task () -> ! {
         //Claim the spinlock
         let _lock = Spinlock1::claim();
         unsafe {
-            if TEAM_ID == 0 {
+            if TELEMETRY.team_id == 0 {
                 led_pin.set_high().unwrap();
             }
             else {
@@ -159,6 +201,9 @@ fn main () -> ! {
 
     //Delay object lets us control timing
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+
+    //Reset the telemetry
+    unsafe {TELEMETRY.reset();}
 
     let _run = core1.spawn(unsafe { &mut CORE1_STACK.mem }, move || {
         core1_task()
