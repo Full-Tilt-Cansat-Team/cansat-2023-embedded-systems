@@ -23,19 +23,21 @@ use rp2040_hal::sio::Spinlock1; //Telemetry spinlock
 
 //Container mode
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum ContainerMode {
     Flight,
     Simulation,
 }
 
 #[allow(dead_code)]
-
+#[derive(Copy, Clone)]
 enum DeploymentState {
     Deployed,
     Undeployed,
 }
-#[allow(dead_code)]
 
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum FlightState {
     PreFlight,
     Flight,
@@ -61,6 +63,7 @@ struct Telemetry {
     gps_time_hours: u32,
     gps_time_minutes: u32,
     gps_time_seconds: f32,
+    gps_altitude: f32,
     gps_latitude: f32,
     gps_longitude: f32,
     gps_sat_count: u32,
@@ -84,6 +87,7 @@ static mut TELEMETRY: Telemetry = Telemetry {
     gps_time_hours: 0,
     gps_time_minutes: 0,
     gps_time_seconds: 0.0,
+    gps_altitude: 0.0,
     gps_latitude: 0.0,
     gps_longitude: 0.0,
     gps_sat_count: 0,
@@ -95,6 +99,11 @@ impl Telemetry {
     fn claim (&mut self) {
         let _lock = Spinlock1::claim();
     }
+
+    fn release (&mut self) {
+        unsafe {let _lock = Spinlock1::release();}
+    }
+
     //Function to reset the telemetry to hardcoded initial values
     fn reset(&mut self) {
         self.claim();
@@ -114,11 +123,200 @@ impl Telemetry {
         self.gps_time_hours = 0;
         self.gps_time_minutes = 0;
         self.gps_time_seconds = 0.0;
+        self.gps_altitude = 0.0;
         self.gps_latitude = 0.0;
         self.gps_longitude = 0.0;
         self.gps_sat_count = 0;
         self.cmd_echo = [0; 32];
-    } 
+        self.release();
+    }
+}
+
+//Getters and setters for the telemetry
+#[allow(dead_code)]
+impl Telemetry {
+    //Getters and setters
+    fn get_team_id(&mut self) -> u32 {
+        self.claim();
+        let team_id = self.team_id;
+        self.release();
+        team_id
+    }
+
+    fn set_team_id(&mut self, team_id: u32) {
+        self.claim();
+        self.team_id = team_id;
+        self.release();
+    }
+
+    fn get_mission_time_hours(&mut self) -> u32 {
+        self.claim();
+        let mission_time_hours = self.mission_time_hours;
+        self.release();
+        mission_time_hours
+    }
+
+    fn set_mission_time_hours(&mut self, mission_time_hours: u32) {
+        self.claim();
+        self.mission_time_hours = mission_time_hours;
+        self.release();
+    }
+
+    fn get_mission_time_minutes(&mut self) -> u32 {
+        self.claim();
+        let mission_time_minutes = self.mission_time_minutes;
+        self.release();
+        mission_time_minutes
+    }
+
+    fn set_mission_time_minutes(&mut self, mission_time_minutes: u32) {
+        self.claim();
+        self.mission_time_minutes = mission_time_minutes;
+        self.release();
+    }
+
+    fn get_mission_time_seconds(&mut self) -> f32 {
+        self.claim();
+        let mission_time_seconds = self.mission_time_seconds;
+        self.release();
+        mission_time_seconds
+    }
+
+    fn set_mission_time_seconds(&mut self, mission_time_seconds: f32) {
+        self.claim();
+        self.mission_time_seconds = mission_time_seconds;
+        self.release();
+    }
+
+    fn get_packet_count(&mut self) -> u32 {
+        self.claim();
+        let packet_count = self.packet_count;
+        self.release();
+        packet_count
+    }
+
+    fn set_packet_count(&mut self, packet_count: u32) {
+        self.claim();
+        self.packet_count = packet_count;
+        self.release();
+    }
+
+    fn get_container_mode(&mut self) -> ContainerMode {
+        self.claim();
+        let container_mode = self.container_mode;
+        self.release();
+        container_mode
+    }
+
+    fn set_container_mode(&mut self, container_mode: ContainerMode) {
+        self.claim();
+        self.container_mode = container_mode;
+        self.release();
+    }
+
+    fn get_mission_state(&mut self) -> FlightState {
+        self.claim();
+        let mission_state = self.mission_state;
+        self.release();
+        mission_state
+    }
+
+    fn set_mission_state(&mut self, mission_state: FlightState) {
+        self.claim();
+        self.mission_state = mission_state;
+        self.release();
+    }
+
+    fn get_altitude(&mut self) -> f32 {
+        self.claim();
+        let altitude = self.altitude;
+        self.release();
+        altitude
+    }
+
+    fn set_altitude(&mut self, altitude: f32) {
+        self.claim();
+        self.altitude = altitude;
+        self.release();
+    }
+
+    fn get_heat_shield_deployment_state(&mut self) -> DeploymentState {
+        self.claim();
+        let heat_shield_deployment_state = self.heat_shield_deployment_state;
+        self.release();
+        heat_shield_deployment_state
+    }
+
+    fn set_heat_shield_deployment_state(&mut self, heat_shield_deployment_state: DeploymentState) {
+        self.claim();
+        self.heat_shield_deployment_state = heat_shield_deployment_state;
+        self.release();
+    }
+
+    fn get_parachute_deployment_state(&mut self) -> DeploymentState {
+        self.claim();
+        let parachute_deployment_state = self.parachute_deployment_state;
+        self.release();
+        parachute_deployment_state
+    }
+
+    fn set_parachute_deployment_state(&mut self, parachute_deployment_state: DeploymentState) {
+        self.claim();
+        self.parachute_deployment_state = parachute_deployment_state;
+        self.release();
+    }
+
+    fn get_mast_deployment_state(&mut self) -> DeploymentState {
+        self.claim();
+        let mast_deployment_state = self.mast_deployment_state;
+        self.release();
+        mast_deployment_state
+    }
+
+    fn set_mast_deployment_state(&mut self, mast_deployment_state: DeploymentState) {
+        self.claim();
+        self.mast_deployment_state = mast_deployment_state;
+        self.release();
+    }
+
+    fn get_gps_latitude(&mut self) -> f32 {
+        self.claim();
+        let gps_latitude = self.gps_latitude;
+        self.release();
+        gps_latitude
+    }
+
+    fn set_gps_latitude(&mut self, gps_latitude: f32) {
+        self.claim();
+        self.gps_latitude = gps_latitude;
+        self.release();
+    }
+
+    fn get_gps_longitude(&mut self) -> f32 {
+        self.claim();
+        let gps_longitude = self.gps_longitude;
+        self.release();
+        gps_longitude
+    }
+
+    fn set_gps_longitude(&mut self, gps_longitude: f32) {
+        self.claim();
+        self.gps_longitude = gps_longitude;
+        self.release();
+    }
+
+    fn get_gps_altitude(&mut self) -> f32 {
+        self.claim();
+        let gps_altitude = self.gps_altitude;
+        self.release();
+        gps_altitude
+    }
+
+    fn set_gps_altitude(&mut self, gps_altitude: f32) {
+        self.claim();
+        self.gps_altitude = gps_altitude;
+        self.release();
+    }
 }
 
 //Function to update the LED state
