@@ -1,6 +1,6 @@
 [package]
-name = "rust-testing"
-version = "0.1.0"
+name = "cansat-2023-embedded-systems"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
