@@ -194,27 +194,6 @@ impl Telemetry {
     }
 }
 
-//Function to update the LED state
-fn blink_led() {
-    //Claim the spinlock
-    let _lock = Spinlock1::claim();
-
-    //Now this code is inside an unsafe block to avoid,
-    //the compiler from yelling at us for modifying this
-    //from multiple cores
-    unsafe {
-        if TELEMETRY.team_id == 0 {
-            TELEMETRY.team_id = 1;
-        }
-        else {
-            TELEMETRY.team_id = 0;
-        }
-    }
-
-    //Release the spinlock
-    unsafe {Spinlock1::release()};
-}
-
 //Set up our linker
 #[link_section = ".boot2"]
 #[used]
@@ -237,36 +216,11 @@ fn core1_task () -> ! {
         &mut pac.RESETS,
     );
 
-    //Create a unique instance of the telemetry
-    let mut telemetry = Telemetry {
-        team_id: 0,
-        mission_time_hours: 0,
-        mission_time_minutes: 0,
-        mission_time_seconds: 0.0,
-        packet_count: 0,
-        container_mode: ContainerMode::Flight,
-        mission_state: FlightState::Flight,
-        altitude: 0.0,
-        heat_shield_deployment_state: DeploymentState::Undeployed,
-        parachute_deployment_state: DeploymentState::Undeployed,
-        mast_deployment_state: DeploymentState::Undeployed,
-        temperature: 0.0,
-        voltage: 0.0,
-        gps_time_hours: 0,
-        gps_time_minutes: 0,
-        gps_time_seconds: 0.0,
-        gps_altitude: 0.0,
-        gps_latitude: 0.0,
-        gps_longitude: 0.0,
-        gps_sat_count: 0,
-        cmd_echo: [0; 32],
-    };
-
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     loop {
         //Safe copy the TELEMETRY global variable into our local telemetry
-        telemetry = unsafe {TELEMETRY.get()};
+        let telemetry = unsafe {TELEMETRY.get()};
 
         //Update the LED state
         if telemetry.team_id == 0 {
