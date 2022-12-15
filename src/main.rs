@@ -167,7 +167,7 @@ impl Telemetry {
     }
 
     //Deep setter
-    fn set(&mut self, telemetry: Telemetry) {
+    fn set(&mut self, telemetry: &Telemetry) {
         self.claim();
         self.team_id = telemetry.team_id;
         self.mission_time_hours = telemetry.mission_time_hours;
@@ -192,7 +192,6 @@ impl Telemetry {
         self.cmd_echo = telemetry.cmd_echo;
         self.release();
     }
-
 }
 
 //Function to update the LED state
@@ -238,18 +237,43 @@ fn core1_task () -> ! {
         &mut pac.RESETS,
     );
 
+    //Create a unique instance of the telemetry
+    let mut telemetry = Telemetry {
+        team_id: 0,
+        mission_time_hours: 0,
+        mission_time_minutes: 0,
+        mission_time_seconds: 0.0,
+        packet_count: 0,
+        container_mode: ContainerMode::Flight,
+        mission_state: FlightState::Flight,
+        altitude: 0.0,
+        heat_shield_deployment_state: DeploymentState::Undeployed,
+        parachute_deployment_state: DeploymentState::Undeployed,
+        mast_deployment_state: DeploymentState::Undeployed,
+        temperature: 0.0,
+        voltage: 0.0,
+        gps_time_hours: 0,
+        gps_time_minutes: 0,
+        gps_time_seconds: 0.0,
+        gps_altitude: 0.0,
+        gps_latitude: 0.0,
+        gps_longitude: 0.0,
+        gps_sat_count: 0,
+        cmd_echo: [0; 32],
+    };
+
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     loop {
-        //Claim the spinlock
-        let _lock = Spinlock1::claim();
-        unsafe {
-            if TELEMETRY.team_id == 0 {
-                led_pin.set_high().unwrap();
-            }
-            else {
-                led_pin.set_low().unwrap();
-            }
+        //Safe copy the TELEMETRY global variable into our local telemetry
+        telemetry = unsafe {TELEMETRY.get()};
+
+        //Update the LED state
+        if telemetry.team_id == 0 {
+            led_pin.set_low().unwrap();
+        }
+        else {
+            led_pin.set_high().unwrap();
         }
     }
 }
@@ -281,6 +305,31 @@ fn main () -> ! {
         &mut watchdog,
     ).ok().unwrap();
 
+    //Unique instance of the telemetry
+    let mut telemetry = Telemetry {
+        team_id: 0,
+        mission_time_hours: 0,
+        mission_time_minutes: 0,
+        mission_time_seconds: 0.0,
+        packet_count: 0,
+        container_mode: ContainerMode::Flight,
+        mission_state: FlightState::Flight,
+        altitude: 0.0,
+        heat_shield_deployment_state: DeploymentState::Undeployed,
+        parachute_deployment_state: DeploymentState::Undeployed,
+        mast_deployment_state: DeploymentState::Undeployed,
+        temperature: 0.0,
+        voltage: 0.0,
+        gps_time_hours: 0,
+        gps_time_minutes: 0,
+        gps_time_seconds: 0.0,
+        gps_altitude: 0.0,
+        gps_latitude: 0.0,
+        gps_longitude: 0.0,
+        gps_sat_count: 0,
+        cmd_echo: [0; 32],
+    };
+
     //Delay object lets us control timing
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
 
@@ -293,7 +342,17 @@ fn main () -> ! {
     });
 
     loop {
-        blink_led();
+        //If our local telemetry is 0, set it to 1, otherwise set it to 0
+        if telemetry.team_id == 0 {
+            telemetry.team_id = 1;
+        }
+        else {
+            telemetry.team_id = 0;
+        }
+
+        //Update the global telemetry
+        unsafe {TELEMETRY.set(&telemetry)};
+
         delay.delay_ms(500);
     }
 }
