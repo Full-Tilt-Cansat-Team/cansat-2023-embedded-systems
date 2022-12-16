@@ -10,8 +10,15 @@ use hal::{pac, rtc::RealTimeClock};
 
 use embedded_hal::digital::v2::OutputPin;
 
+//USB
+use usb_device::{class_prelude::*, prelude::*};
+use usbd_serial::SerialPort;
+
 //Frequency of our crystal (this is currently set to the PICO default)
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+
+//ArrayVec for strings
+use arrayvec::ArrayString;
 
 //Spinlocks for communication between cores
 #[allow(unused_imports)]
@@ -268,6 +275,26 @@ fn main () -> ! {
         &mut watchdog,
     ).ok().unwrap();
 
+    //USB Driver
+    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+
+    //Set up communication driver
+    let mut serial = SerialPort::new(&usb_bus);
+
+    //Create a "fake" usb device
+    let mut usb_dev = UsbDeviceBuilder::new (&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+        .manufacturer("Fake company")
+        .product("Serial port")
+        .serial_number("TEST")
+        .device_class(2)
+        .build();
+
     //Initial date
     let date = hal::rtc::DateTime {
         year: 2021,
@@ -292,9 +319,42 @@ fn main () -> ! {
     let mut start_moment = RealTimeClock::now(&clock).unwrap();
 
     loop {
+        //Check for incoming serial data, and process it
+        // Check for new data
+        if usb_dev.poll(&mut [&mut serial]) {
+            let mut buf = [0u8; 64];
+            match serial.read(&mut buf) {
+                Err(_e) => {
+                    // Do nothing
+                }
+                Ok(0) => {
+                    // Do nothing
+                }
+                Ok(count) => {
+                    // Convert to upper case
+                    buf.iter_mut().take(count).for_each(|b| {
+                        b.make_ascii_uppercase();
+                    });
+
+                    // Send back to the host
+                    let mut wr_ptr = &buf[..count];
+                    while !wr_ptr.is_empty() {
+                        match serial.write(wr_ptr) {
+                            Ok(len) => wr_ptr = &wr_ptr[len..],
+                            // On error, just drop unwritten data.
+                            // One possible error is Err(WouldBlock), meaning the USB
+                            // write buffer is full.
+                            Err(_) => break,
+                        };
+                    }
+                }
+            }
+        }
+
+        //This section only manages LED blinking safely, due to integers being used for datetimes
+        //TODO: get a better time system in place, counting cycles perhaps?
         let current_moment = RealTimeClock::now(&clock).unwrap();
         let difference = datetime_difference(&start_moment, &current_moment);
-
         if difference >= 0.1 {
             start_moment = current_moment;
             if led_state == 1 {
