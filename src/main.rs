@@ -6,10 +6,9 @@ use panic_halt as _;
 
 //Grab the HAL and our associated drivers
 use rp2040_hal as hal;
-use hal::pac;
+use hal::{pac, rtc::RealTimeClock};
 
 use embedded_hal::digital::v2::OutputPin;
-use rp2040_hal::clocks::Clock;
 
 //Frequency of our crystal (this is currently set to the PICO default)
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
@@ -200,9 +199,11 @@ impl Telemetry {
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 //Manually set up our stack
+//This is not allowed to be dead code as a little warning
 static mut CORE1_STACK: hal::multicore::Stack<4096> = hal::multicore::Stack::new();
 
 //Function to run on core 1
+#[allow(dead_code)]
 fn core1_task () -> ! {
     //Yes, it gets annoyed if we have this unused, but I'm sure we'll use it later
     let mut pac = unsafe { pac::Peripherals::steal() };
@@ -233,12 +234,20 @@ fn core1_task () -> ! {
 }
 
 //THIS LINE IS VERY IMPORTANT. IT TELLS THE COMILER TO USE THIS FUNCTION AS ENTRY POINT
+#[allow(unused_variables)]
 #[rp2040_hal::entry]
 fn main () -> ! {
+
     //Set up our peripherals
     let mut pac = pac::Peripherals::take().unwrap();
     let mut sio = hal::Sio::new(pac.SIO);
     let core = cortex_m::Peripherals::take().unwrap();
+    let pins = hal::gpio::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio.gpio_bank0,
+        &mut pac.RESETS,
+    );
 
     //Multicore setup
     let mut mc = hal::multicore::Multicore::new(&mut pac.PSM, &mut pac.PPB, &mut sio.fifo);
@@ -259,54 +268,37 @@ fn main () -> ! {
         &mut watchdog,
     ).ok().unwrap();
 
-    //Unique instance of the telemetry
-    let mut telemetry = Telemetry {
-        team_id: 0,
-        mission_time_hours: 0,
-        mission_time_minutes: 0,
-        mission_time_seconds: 0.0,
-        packet_count: 0,
-        container_mode: ContainerMode::Flight,
-        mission_state: FlightState::Flight,
-        altitude: 0.0,
-        heat_shield_deployment_state: DeploymentState::Undeployed,
-        parachute_deployment_state: DeploymentState::Undeployed,
-        mast_deployment_state: DeploymentState::Undeployed,
-        temperature: 0.0,
-        voltage: 0.0,
-        gps_time_hours: 0,
-        gps_time_minutes: 0,
-        gps_time_seconds: 0.0,
-        gps_altitude: 0.0,
-        gps_latitude: 0.0,
-        gps_longitude: 0.0,
-        gps_sat_count: 0,
-        cmd_echo: [0; 32],
+    //Initial date
+    let date = hal::rtc::DateTime {
+        year: 2021,
+        month: 1,
+        day_of_week: hal::rtc::DayOfWeek::Monday,
+        day: 1,
+        hour: 0,
+        minute: 0,
+        second: 0,
     };
 
-    //Delay object lets us control timing
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+    let clock = RealTimeClock::new(pac.RTC, clocks.rtc_clock, &mut pac.RESETS, date)
+        .unwrap();
+
+    let mut led_pin = pins.gpio25.into_push_pull_output();
 
     //Reset the telemetry
     unsafe {TELEMETRY.reset();}
 
-    //Spawn our core 1 task
-    let _run = core1.spawn(unsafe { &mut CORE1_STACK.mem }, move || {
-        core1_task()
-    });
+    let mut led_state = 1;
 
     loop {
-        //If our local telemetry is 0, set it to 1, otherwise set it to 0
-        if telemetry.team_id == 0 {
-            telemetry.team_id = 1;
+        if led_state == 1 {
+            led_pin.set_high().unwrap();
+            led_state = 0;
         }
         else {
-            telemetry.team_id = 0;
+            led_pin.set_low().unwrap();
+            led_state = 1;
         }
 
-        //Update the global telemetry
-        unsafe {TELEMETRY.set(&telemetry)};
-
-        delay.delay_ms(500);
+        let time = RealTimeClock::now(&clock);
     }
 }
