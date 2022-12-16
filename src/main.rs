@@ -289,16 +289,33 @@ fn main () -> ! {
 
     let mut led_state = 1;
 
-    loop {
-        if led_state == 1 {
-            led_pin.set_high().unwrap();
-            led_state = 0;
-        }
-        else {
-            led_pin.set_low().unwrap();
-            led_state = 1;
-        }
+    let mut start_moment = RealTimeClock::now(&clock).unwrap();
 
-        let time = RealTimeClock::now(&clock);
+    loop {
+        let current_moment = RealTimeClock::now(&clock).unwrap();
+        let difference = datetime_difference(&start_moment, &current_moment);
+
+        if difference >= 0.1 {
+            start_moment = current_moment;
+            if led_state == 1 {
+                led_pin.set_high().unwrap();
+                led_state = 0;
+            }
+            else {
+                led_pin.set_low().unwrap();
+                led_state = 1;
+            }
+        }
     }
+}
+
+fn datetime_difference (start: &hal::rtc::DateTime, end: &hal::rtc::DateTime) -> f32 {
+    let mut seconds = 0.0;
+    seconds += (end.year - start.year) as f32 * 365.0 * 24.0 * 60.0 * 60.0;
+    seconds += (end.month - start.month) as f32 * 30.0 * 24.0 * 60.0 * 60.0;
+    seconds += (end.day - start.day) as f32 * 24.0 * 60.0 * 60.0;
+    seconds += (end.hour - start.hour) as f32 * 60.0 * 60.0;
+    seconds += (end.minute - start.minute) as f32 * 60.0;
+    seconds += (end.second - start.second) as f32;
+    seconds
 }
