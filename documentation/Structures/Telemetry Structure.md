@@ -52,45 +52,25 @@ Creating this many variables is super tedious, so we can do so here.
 fn new() -> Self {
 	Self {
 		team_id: 0,
-
 		mission_time_hours: 0,
-		
 		mission_time_minutes: 0,
-		
 		mission_time_seconds: 0.0,
-		
 		packet_count: 0,
-		
 		container_mode: ContainerMode::Flight,
-		
 		mission_state: FlightState::PreFlight,
-		
 		altitude: 0.0,
-		
 		heat_shield_DeploymentState: DeploymentState::Undeployed,
-		
 		parachute_DeploymentState: DeploymentState::Undeployed,
-		
 		mast_DeploymentState: DeploymentState::Undeployed,
-		
 		temperature: 0.0,
-		
 		voltage: 0.0,
-		
 		gps_time_hours: 0,
-		
 		gps_time_minutes: 0,
-		
 		gps_time_seconds: 0.0,
-		
 		gps_altitude: 0.0,
-		
 		gps_latitude: 0.0,
-		
 		gps_longitude: 0.0,
-		
 		gps_sat_count: 0,
-		
 		cmd_echo: [0; 32],
 	}
 }
@@ -159,3 +139,4 @@ fn set(&mut self, telemetry: &Telemetry) {
 	self.release();
 }
 ```
+

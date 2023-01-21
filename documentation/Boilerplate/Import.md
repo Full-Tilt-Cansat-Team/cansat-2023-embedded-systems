@@ -32,7 +32,7 @@ Grab our [[Spinlock]]s. These help us communicate between [[Core One]] and [[Cor
 
 ```rust
 //import
-use rp2040_hal::sio::Spinlock0; //Debug-reserved spinlock
-use rp2040_hal::sio::Spinlock1; //Telemetry structure spinlock
+use hal::sio::Spinlock0; //Debug-reserved spinlock
+use hal::sio::Spinlock1; //Telemetry structure spinlock
 ```
 
