@@ -11,17 +11,23 @@ use rp2040_hal::sio::Spinlock0; //Debug-reserved spinlock
 use rp2040_hal::sio::Spinlock1; //Telemetry structure spinlock
 
 
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum FlightState {
 	PreFlight,
 	Flight,
 	PostFlight,
 }
 
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum DeploymentState {
 	Deployed,
 	Undeployed,
 }
 
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum ContainerMode {
 	Flight,
 	Simulation,

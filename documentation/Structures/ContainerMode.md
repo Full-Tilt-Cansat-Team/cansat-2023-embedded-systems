@@ -3,6 +3,8 @@ The containerstate helps the [[Telemetry Structure]] maintain multiple modes wit
 
 ```rust
 //init
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum ContainerMode {
 	Flight,
 	Simulation,

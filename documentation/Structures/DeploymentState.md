@@ -2,6 +2,8 @@ The Deployement state enum helps the [[Telemetry Structure]] keep track of most 
 
 ```rust
 //init
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
 enum DeploymentState {
 	Deployed,
 	Undeployed,
