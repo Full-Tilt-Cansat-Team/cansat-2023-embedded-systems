@@ -97,6 +97,15 @@ for i in range(len(codeBlocks)):
                     for k in range(len(codeBlocks[i].code)):
                         codeBlocks[j].code.append(codeBlocks[i].code[k])
 
+#Ok, next func-close. This is used always to close, and is thus placed at the end of the function
+for i in range(len(codeBlocks)):
+    if codeBlocks[i].tags[0] == "func-close":
+        for j in range(len(codeBlocks)):
+            if codeBlocks[j].tags[0] == "func-def":
+                if codeBlocks[j].tags[1] == codeBlocks[i].tags[1]:
+                    for line in codeBlocks[i].code:
+                        codeBlocks[j].code.append(line)
+
 # Now, finally we can add a singular function list
 functions = []
 
