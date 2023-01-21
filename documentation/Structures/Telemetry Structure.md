@@ -25,3 +25,12 @@ struct Telemetry {
 	cmd_echo: [u32; 32],
 }
 ```
+
+The claim and release functions grabs our dedicated [[Spinlock]] so that we can be safe with our [[Multicore System]].
+
+```rust
+//func-impl Telemetry
+fn claim (&mut self) {
+	let _lock = Spinlock1::claim();
+}
+```

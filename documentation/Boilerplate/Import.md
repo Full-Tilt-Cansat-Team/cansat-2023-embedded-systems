@@ -7,6 +7,13 @@ First, we tell our compiler not to use the Standard Template Libary or the stand
 #![no_main]
 ```
 
+Let our program know that we will simply halt if we run into a panic.
+
+```rust
+//import
+use panic_halt as _;
+```
+
 Then, we grab our HAL
 
 ```rust

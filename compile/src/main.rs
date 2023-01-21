@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use panic_halt as _;
+
 use rp2040_hal as hal;
 
 use hal::{pac, rtc::RealTimeClock};
@@ -52,4 +54,9 @@ struct Telemetry {
 }
 
 
+impl Telemetry {
+fn claim (&mut self) {
+	let _lock = Spinlock1::claim();
+}
+}
 

@@ -116,6 +116,17 @@ for block in codeBlocks:
 
         functions.append("}")
 
+# func-impl needs to be handled differently, because they need the imply block and closers
+implies = [] 
+
+for block in codeBlocks:
+    if block.tags[0] == "func-impl":
+        implies.append("impl " + block.tags[1] + " {")
+        for line in block.code:
+            implies.append(line)
+
+        implies.append("}")
+
 # Now, write the code to a compile/src/main.rs file
 with open("compile/src/main.rs", "w") as file:
     for i in import_lines:
@@ -132,6 +143,9 @@ with open("compile/src/main.rs", "w") as file:
         file.write(i + "\n")
 
     file.write("\n")
+
+    for i in implies:
+        file.write(i + "\n")
 
     for i in functions:
         file.write(i + "\n")
