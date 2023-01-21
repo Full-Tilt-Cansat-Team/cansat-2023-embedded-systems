@@ -24,7 +24,7 @@ use hal::{pac, rtc::RealTimeClock};
 Grab our [[Spinlock]]s. These help us communicate between [[Core One]] and [[Core Two]] safely. 
 
 ```rust
-//import 
+//import
 use rp2040_hal::sio::Spinlock0; //Debug-reserved spinlock
 use rp2040_hal::sio::Spinlock1; //Telemetry structure spinlock
 ```

@@ -32,6 +32,7 @@ for f in files:
             if line.startswith("```"):
                 if reading:
                     tags = currentBlock[0].split(" ")
+                    print(tags)
                     for i in range(len(tags)):
                         if tags[i][-1] == "\n":
                             tags[i] = tags[i][:-1]
@@ -45,10 +46,6 @@ for f in files:
                     reading = True
             elif reading:
                 currentBlock.append(line[:-1])
-
-for i in codeBlocks:
-    print(i.code)
-    print(i.tags)
 
 # The first tag we block out is the import tag
 # These blocks handle package importing
@@ -73,6 +70,16 @@ for block in codeBlocks:
             init_lines.append(block.code[i])
 
         init_lines.append("")
+
+# Structures are expected to be defined all at once, so we'll also avoid processing them
+struct_lines = []
+
+for block in codeBlocks:
+    if block.tags[0] == "struct":
+        for i in range(len(block.code)):
+            struct_lines.append(block.code[i])
+
+        struct_lines.append("")
         
 # Now we'll pre-process the func-def tags. These are used to define functions, but we need
 # to remove the function closing tag
@@ -110,6 +117,11 @@ with open("compile/src/main.rs", "w") as file:
     for i in init_lines:
         file.write(i + "\n")
     
+    file.write("\n")
+
+    for i in struct_lines:
+        file.write(i + "\n")
+
     file.write("\n")
 
     for i in functions:
