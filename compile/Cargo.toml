@@ -7,3 +7,14 @@ edition = "2021"
 
 [dependencies]
 panic-halt = "0.2.0"
+rp2040-hal = "0.7.0"
+cortex-m-rt = "0.7.2"
+embedded-hal = "0.2.7"
+rp2040-boot2 = "0.2.1"
+cortex-m = {version = "0.7.2", features = ["critical-section-single-core"]}
+pio = "0.2.0"
+fugit = "0.3.5"
+usb-device = "0.2.9"
+usbd-serial = "0.1.1"
+usbd-hid = "0.5.1"
+arrayvec = "0.7.2"
