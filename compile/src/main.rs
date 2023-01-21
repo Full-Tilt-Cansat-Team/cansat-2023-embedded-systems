@@ -185,4 +185,45 @@ fn set(&mut self, telemetry: &Telemetry) {
 	self.release();
 }
 }
+#[hal::entry]
+fn main () -> ! {
+	
+let mut pac = pac::Peripherals::take().unwrap();
+let mut sio = hal::Sio::new(pac.SIO);
+let core = cortex_m::Peripherals::take().unwrap();
+
+let pins = hal::gpio::Pins::new(
+	pac.IO_BANK0,
+	pac.PADS_BANK0,
+	sio.gpio_bank0,
+	&mut pac.RESETS,
+);
+let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+let clocks = hal::clocks::init_clocks_and_plls(
+	XTAL_FREQ_HZ,
+	pac.XOSC,
+	pac.CLOCKS,
+	pac.PLL_SYS,
+	pac.PLL_USB,
+	&mut pac.RESETS,
+	&mut watchdog,).ok().unwrap();
+
+let date = hal::rtc::DateTime {
+	year: 2022,
+	moth: 1,
+	day_of_week: hal::rtc::DayOfWeek:Saturday,
+	day: 21,
+	hour: 16,
+	minute: 25,
+	second: 0,
+};
+
+let clock = RealTimeClock::new(
+	pac.RTC,
+	clocks.rtc_clock,
+	&mut pac.RESETS,
+	date
+).unwrap();
+loop {}
+}
 
