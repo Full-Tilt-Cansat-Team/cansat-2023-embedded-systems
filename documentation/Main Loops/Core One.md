@@ -46,7 +46,7 @@ let clocks = hal::clocks::init_clocks_and_plls(
 
 let date = hal::rtc::DateTime {
 	year: 2022,
-	moth: 1,
+	month: 1,
 	day_of_week: hal::rtc::DayOfWeek::Saturday,
 	day: 21,
 	hour: 16,
@@ -62,9 +62,38 @@ let clock = RealTimeClock::new(
 ).unwrap();
 ```
 
+Next, for our single core status, we'll set up an LED
+
+```rust
+//func main
+let mut led_pin = pins.gpio25.into_push_pull_output();
+let mut led_state = 1;
+```
+
+We'll initialize a start time pulling from our [[Clock]]
+
+```rust
+//func main
+let mut start_moment = RealTimeClock::now(&clock).unwrap();
+```
+
 As part of our decleration, this function may never exit, so we'll need to add a terminating infinite loop.
 
 ```rust
 //func-close main
-loop {}
+loop {
+	let current_moment = RealTimeClock::now(&clock).unwrap();
+	let difference = datetime_difference(&start_moment, &current_moment);
+	
+	if difference >= 0.1 {
+		start_moment = current_moment;
+		if led_state == 1 {
+			led_pin.set_high().unwrap();
+			led_state = 0;
+		} else {
+			led_pin.set_low().unwrap();
+			led_state = 1;
+		}
+	}
+}
 ```

@@ -10,6 +10,8 @@ use hal::{pac, rtc::RealTimeClock};
 use hal::sio::Spinlock0; //Debug-reserved spinlock
 use hal::sio::Spinlock1; //Telemetry structure spinlock
 
+use embedded_hal::digital::v2::OutputPin;
+
 
 #[allow(dead_code)]
 #[derive(Copy, Clone)]
@@ -185,6 +187,16 @@ fn set(&mut self, telemetry: &Telemetry) {
 	self.release();
 }
 }
+fn datetime_difference(start: &hal::rtc::DateTime, end: &hal::rtc::DateTime) -> f32 {
+	let mut seconds = 0.0;
+	seconds += (end.year - start.year) as f32 * 365.0 * 24.0 * 60.0 * 60.0;
+	seconds += (end.month - start.month) as f32 * 30.0 * 24.0 * 60.0 * 60.0;
+	seconds += (end.day - start.day) as f32 * 24.0 * 60.0 * 60.0;
+	seconds += (end.hour - start.hour) as f32 * 60.0 * 60.0;
+	seconds += (end.minute - start.minute) as f32 * 60.0;
+	seconds += (end.second - start.second) as f32;
+	seconds 
+}
 #[hal::entry]
 fn main () -> ! {
 	
@@ -210,8 +222,8 @@ let clocks = hal::clocks::init_clocks_and_plls(
 
 let date = hal::rtc::DateTime {
 	year: 2022,
-	moth: 1,
-	day_of_week: hal::rtc::DayOfWeek:Saturday,
+	month: 1,
+	day_of_week: hal::rtc::DayOfWeek::Saturday,
 	day: 21,
 	hour: 16,
 	minute: 25,
@@ -224,6 +236,23 @@ let clock = RealTimeClock::new(
 	&mut pac.RESETS,
 	date
 ).unwrap();
-loop {}
+let mut led_pin = pins.gpio25.into_push_pull_output();
+let mut led_state = 1;
+let mut start_moment = RealTimeClock::now(&clock).unwrap();
+loop {
+	let current_moment = RealTimeClock::now(&clock).unwrap();
+	let difference = datetime_difference(&start_moment, &current_moment);
+	
+	if difference >= 0.1 {
+		start_moment = current_moment;
+		if led_state == 1 {
+			led_pin.set_high().unwrap();
+			led_state = 0;
+		} else {
+			led_pin.set_low().unwrap();
+			led_state = 1;
+		}
+	}
+}
 }
 

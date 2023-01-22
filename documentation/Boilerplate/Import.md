@@ -36,3 +36,9 @@ use hal::sio::Spinlock0; //Debug-reserved spinlock
 use hal::sio::Spinlock1; //Telemetry structure spinlock
 ```
 
+Set up our embedded hal to use imput
+
+```rust
+//import
+use embedded_hal::digital::v2::OutputPin;
+```
