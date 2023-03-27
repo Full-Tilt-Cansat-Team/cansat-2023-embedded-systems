@@ -8,6 +8,7 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
 usb-device= "0.2.9"
+rp2040-boot2 = "0.2.1"
 
 usbd-serial = "0.1.1"
 heapless = "0.7.9"
