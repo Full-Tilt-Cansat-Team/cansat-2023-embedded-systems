@@ -1,62 +1,58 @@
-//! # Pico USB Serial Example
+//! # I²C Example
 //!
-//! Creates a USB Serial device on a Pico board, with the USB driver running in
-//! the main thread.
+//! This application demonstrates how to talk to I²C devices with an RP2040.
 //!
-//! This will create a USB Serial device echoing anything it receives. Incoming
-//! ASCII characters are converted to upercase, so you can tell it is working
-//! and not just local-echo!
+//! It may need to be adapted to your particular board layout and/or pin assignment.
 //!
 //! See the `Cargo.toml` file for Copyright and license details.
 
 #![no_std]
 #![no_main]
 
-// The macro for our start-up function
-use rp_pico::entry;
-
 // Ensure we halt the program on panic (if we don't mention this crate it won't
 // be linked)
 use panic_halt as _;
 
+// Some traits we need
+use embedded_hal::blocking::i2c::Write;
+use fugit::RateExtU32;
+
+// Alias for our HAL crate
+use rp2040_hal as hal;
+
 // A shorter alias for the Peripheral Access Crate, which provides low-level
 // register access
-use rp_pico::hal::pac;
+use hal::pac;
 
-// A shorter alias for the Hardware Abstraction Layer, which provides
-// higher-level drivers.
-use rp_pico::hal;
+/// The linker will place this boot block at the start of our program image. We
+/// need this to help the ROM bootloader get our code up and running.
+/// Note: This boot block is not necessary when using a rp-hal based BSP
+/// as the BSPs already perform this step.
+#[link_section = ".boot2"]
+#[used]
+pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
 
-// USB Device support
-use usb_device::{class_prelude::*, prelude::*};
-
-// USB Communications Class Device support
-use usbd_serial::SerialPort;
-
-// Used to demonstrate writing formatted strings
-use core::fmt::Write;
-use heapless::String;
+/// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
+/// if your board has a different frequency
+const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 /// Entry point to our bare-metal application.
 ///
-/// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
-/// as soon as all global variables are initialised.
+/// The `#[rp2040_hal::entry]` macro ensures the Cortex-M start-up code calls this function
+/// as soon as all global variables and the spinlock are initialised.
 ///
-/// The function configures the RP2040 peripherals, then echoes any characters
-/// received over USB Serial.
-#[entry]
+/// The function configures the RP2040 peripherals, then performs a single I²C
+/// write to a fixed address.
+#[rp2040_hal::entry]
 fn main() -> ! {
-    // Grab our singleton objects
     let mut pac = pac::Peripherals::take().unwrap();
 
     // Set up the watchdog driver - needed by the clock setup code
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
 
     // Configure the clocks
-    //
-    // The default is to generate a 125 MHz system clock
     let clocks = hal::clocks::init_clocks_and_plls(
-        rp_pico::XOSC_CRYSTAL_FREQ,
+        XTAL_FREQ_HZ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -67,85 +63,41 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    #[cfg(feature = "rp2040-e5")]
-    {
-        let sio = hal::Sio::new(pac.SIO);
-        let _pins = rp_pico::Pins::new(
-            pac.IO_BANK0,
-            pac.PADS_BANK0,
-            sio.gpio_bank0,
-            &mut pac.RESETS,
-        );
-    }
+    // The single-cycle I/O block controls our GPIO pins
+    let sio = hal::Sio::new(pac.SIO);
 
-    // Set up the USB driver
-    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
+    // Set the pins to their default state
+    let pins = hal::gpio::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio.gpio_bank0,
         &mut pac.RESETS,
-    ));
+    );
 
-    // Set up the USB Communications Class Device driver
-    let mut serial = SerialPort::new(&usb_bus);
+    // Configure two pins as being I²C, not GPIO
+    let sda_pin = pins.gpio18.into_mode::<hal::gpio::FunctionI2C>();
+    let scl_pin = pins.gpio19.into_mode::<hal::gpio::FunctionI2C>();
+    // let not_an_scl_pin = pins.gpio20.into_mode::<hal::gpio::FunctionI2C>();
 
-    // Create a USB device with a fake VID and PID
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .manufacturer("Fake company")
-        .product("Serial port")
-        .serial_number("TEST")
-        .device_class(2) // from: https://www.usb.org/defined-class-codes
-        .build();
+    // Create the I²C drive, using the two pre-configured pins. This will fail
+    // at compile time if the pins are in the wrong mode, or if this I²C
+    // peripheral isn't available on these pins!
+    let mut i2c = hal::I2C::i2c1(
+        pac.I2C1,
+        sda_pin,
+        scl_pin, // Try `not_an_scl_pin` here
+        400.kHz(),
+        &mut pac.RESETS,
+        &clocks.system_clock,
+    );
 
-    let timer = hal::Timer::new(pac.TIMER, &mut pac.RESETS);
-    let mut said_hello = false;
+    let BNO055_ADDRESS = 0x28;
+
+    // Demo finish - just loop until reset
+
     loop {
-        // A welcome message at the beginning
-        if !said_hello && timer.get_counter().ticks() >= 2_000_000 {
-            said_hello = true;
-            let _ = serial.write(b"Hello, World!\r\n");
-
-            let time = timer.get_counter().ticks();
-            let mut text: String<64> = String::new();
-            writeln!(&mut text, "Current timer ticks: {}", time).unwrap();
-
-            // This only works reliably because the number of bytes written to
-            // the serial port is smaller than the buffers available to the USB
-            // peripheral. In general, the return value should be handled, so that
-            // bytes not transferred yet don't get lost.
-            let _ = serial.write(text.as_bytes());
-        }
-
-        // Check for new data
-        if usb_dev.poll(&mut [&mut serial]) {
-            let mut buf = [0u8; 64];
-            match serial.read(&mut buf) {
-                Err(_e) => {
-                    // Do nothing
-                }
-                Ok(0) => {
-                    // Do nothing
-                }
-                Ok(count) => {
-                    // Convert to upper case
-                    buf.iter_mut().take(count).for_each(|b| {
-                        b.make_ascii_uppercase();
-                    });
-                    // Send back to the host
-                    let mut wr_ptr = &buf[..count];
-                    while !wr_ptr.is_empty() {
-                        match serial.write(wr_ptr) {
-                            Ok(len) => wr_ptr = &wr_ptr[len..],
-                            // On error, just drop unwritten data.
-                            // One possible error is Err(WouldBlock), meaning the USB
-                            // write buffer is full.
-                            Err(_) => break,
-                        };
-                    }
-                }
-            }
-        }
+        // Write three bytes to the I²C device with 7-bit address 0x2C
+        i2c.write(BNO055_ADDRESS, &[1, 2, 3]).unwrap();
     }
 }
 

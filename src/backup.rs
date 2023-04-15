@@ -155,9 +155,6 @@ fn read_BNO(
 ///
 /// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
 /// as soon as all global variables are initialised.
-///
-/// The function configures the RP2040 peripherals, then echoes any characters
-/// received over USB Serial.
 #[entry]
 fn main() -> ! {
     // Grab our singleton objects
