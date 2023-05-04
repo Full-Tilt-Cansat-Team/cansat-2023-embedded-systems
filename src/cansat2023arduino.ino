@@ -94,10 +94,10 @@ unsigned long deltaTime; // How much time has passed between logic steps
 bool transmitting = false; // Are we transmitting packets?
 
 static unsigned long PACKET_GAP_TIME = 1000;
-static int TEAM_ID = 9999;
+static int TEAM_ID = 1073;
 
 // ADC pin for voltage
-#define ADC_GPIO_PIN 29
+#define ADC_GPIO_PIN 27
 
 // Release servo
 Servo M2;
@@ -107,11 +107,11 @@ Servo M2;
 #define M2_OPEN 40
 
 // Release servo
-Servo M3;
-#define M3_PWM_PIN 21
-#define M3_MOS_PIN 27
-#define M3_CLOSED 0
-#define M3_OPEN 40
+Servo M1;
+#define M1_PWM_PIN 19
+#define M1_MOS_PIN 22
+#define M1_CLOSED 0
+#define M1_OPEN 40
 
 int packetCount;
 
@@ -125,10 +125,10 @@ void setup() {
   digitalWrite(M2_MOS_PIN, HIGH);
 
   // M5 setup
-  M3.attach(M3_PWM_PIN, 427, 2400);
-  M3.write(M3_CLOSED);
-  pinMode(M3_MOS_PIN, OUTPUT);
-  digitalWrite(M3_MOS_PIN, LOW);
+  M1.attach(M1_PWM_PIN, 427, 2400);
+  M1.write(M1_CLOSED);
+  pinMode(M1_MOS_PIN, OUTPUT);
+  digitalWrite(M1_MOS_PIN, LOW);
 
   flightState = LowPower;
 
@@ -185,8 +185,9 @@ void loop() {
 
     // Analog
     adcVol = analogRead(ADC_GPIO_PIN);
-    voltage = (float)adcVol * 3.3 / 4095;
-
+    // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
+    voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
+    
     // Flight state changes
     {
       if (flightState == LowPower) {
