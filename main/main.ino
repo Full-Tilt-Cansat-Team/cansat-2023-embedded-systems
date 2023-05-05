@@ -66,59 +66,10 @@ struct TelemetryPacket {
   String cmdEcho;
 };
 
-class CommandHandler {
-  public:
-  String buffer;
-  String command;
-  String arg;
-
-  CommandHandler() {
-    buffer = "";
-    command = "";
-    arg = "";
-  }
-
-  void addToBuffer() {
-    while (Serial.available() > 0) {
-      char c = Serial.read();
-      if (c == (int)";") {
-        detectCommand(buffer);
-      } else {
-        buffer += (char)c;
-      }
-    }
-  }
-
-  void detectCommand(String buffer) {
-    // find the locations of the commas
-    int first_comma = buffer.indexOf(',');
-    int second_comma = buffer.indexOf(',', first_comma + 1);
-    int third_comma = buffer.indexOf(',', second_comma + 1);
-
-    String cmd = buffer.substring(second_comma + 1, third_comma);
-    if (third_comma != -1) {
-      String arg = buffer.substring(third_comma+1);
-    }
-
-    if (cmd == "CX") {
-      CX(arg);
-    } else if (cmd == "CAL") {
-      CAL(arg);
-    }
-  }
-
-  void CX(String arg) {
-    if (arg == "ON") {
-      transmitting = true;
-    } else {
-      transmitting = false;
-    }
-  }
-
-  void CAL(String arg) {
-    calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
-  }
-};
+// Will help in transitioning to XBEE TODO: CHANGE BEFOREL LAUNCH
+void transmit(String toTransmit) {
+  Serial.println(toTransmit);
+}
 
 // Flight-time variables
 FlightState flightState; // Holds the determinant for state change logic
@@ -172,6 +123,77 @@ Servo M2;
 #define M2_OPEN 40
 
 int packetCount;
+
+class CommandHandler {
+  public:
+  String buffer;
+  String command;
+  String arg;
+
+  CommandHandler() {
+    buffer = "";
+  }
+
+  void addToBuffer() {
+    while (Serial.available() > 0) {
+      char c = (char)Serial.read();
+      Serial.print(c);
+    if (c == ';') {
+        Serial.print("\n");
+        detectCommand(buffer);
+        buffer = "";
+      } else {
+        buffer += (char)c;
+      }
+    }
+  }
+
+  void detectCommand(String buffer) {
+    // find the locations of the commas
+    int first_comma = buffer.indexOf(',');
+    int second_comma = buffer.indexOf(',', first_comma + 1);
+    int third_comma = buffer.indexOf(',', second_comma + 1);
+
+    String cmd = buffer.substring(second_comma + 1, third_comma);
+    Serial.print("COMMAND: ");
+    Serial.print("|");
+    Serial.print(cmd);
+    Serial.println("|");
+    String arg = "";
+    if (third_comma != -1) {
+      arg = buffer.substring(third_comma+1);
+      Serial.print("ARG: ");
+      Serial.println(arg);
+    }
+
+    if (cmd == "CX") {
+      CX(arg);
+    } else if (cmd == "CAL") {
+      CAL(arg);
+    } else if (cmd == "ECHO") {
+      ECHO(arg);
+    }
+  }
+
+  void ECHO(String arg) {
+    transmit(arg);
+  }
+
+  void CX(String arg) {
+    if (arg == "ON") {
+      transmitting = true;
+    } else {
+      transmitting = false;
+    }
+  }
+
+  void CAL(String arg) {
+    calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+  }
+};
+
+// Commander for the flight computer
+CommandHandler commander;
 
 void setup() {
   Serial.begin(9600); // Open serial line TODO: Remove this in favor of xbee
@@ -233,6 +255,9 @@ void setup() {
   }
 
   calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+
+  // Create command handler
+  commander = CommandHandler();
 };
 
 void loop() {
@@ -257,6 +282,8 @@ void loop() {
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
+
+    commander.addToBuffer();
     
     // Flight state changes
     {
