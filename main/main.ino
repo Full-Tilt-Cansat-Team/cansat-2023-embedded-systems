@@ -2,6 +2,7 @@
 Libraries
 */
 #include "Adafruit_BMP3XX.h"
+#include "SparkFun_Ublox_Arduino_Library.h"
 #include <Wire.h>
 #include <Servo.h>
 
@@ -65,12 +66,67 @@ struct TelemetryPacket {
   String cmdEcho;
 };
 
+class CommandHandler {
+  public:
+  String buffer;
+  String command;
+  String arg;
+
+  CommandHandler() {
+    buffer = "";
+    command = "";
+    arg = "";
+  }
+
+  void addToBuffer() {
+    while (Serial.available() > 0) {
+      char c = Serial.read();
+      if (c == (int)";") {
+        detectCommand(buffer);
+      } else {
+        buffer += (char)c;
+      }
+    }
+  }
+
+  void detectCommand(String buffer) {
+    // find the locations of the commas
+    int first_comma = buffer.indexOf(',');
+    int second_comma = buffer.indexOf(',', first_comma + 1);
+    int third_comma = buffer.indexOf(',', second_comma + 1);
+
+    String cmd = buffer.substring(second_comma + 1, third_comma);
+    if (third_comma != -1) {
+      String arg = buffer.substring(third_comma+1);
+    }
+
+    if (cmd == "CX") {
+      CX(arg);
+    } else if (cmd == "CAL") {
+      CAL(arg);
+    }
+  }
+
+  void CX(String arg) {
+    if (arg == "ON") {
+      transmitting = true;
+    } else {
+      transmitting = false;
+    }
+  }
+
+  void CAL(String arg) {
+    calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+  }
+};
+
 // Flight-time variables
 FlightState flightState; // Holds the determinant for state change logic
 
 TelemetryPacket telemetry; // Holds telemetry packets
 
 TimeStruct currentTime; // Holds global time
+TimeStruct gpsTime; // Time as seen by GPS
 
 float altitude; // Altitude of cansat
 float lastAltitude; // Altitude at last logic step
@@ -82,6 +138,7 @@ float pressure; // Pressure (hPa)
 float voltage; // Voltage (volts)
 int adcVol; // voltage (unitless)
 
+SFE_UBLOX_GPS gps; // gps
 
 Adafruit_BMP3XX bmp; // BMP388 Sensor for pressure/temperature
 #define SEALEVELPRESSURE_HPA 1000
@@ -93,18 +150,12 @@ unsigned long deltaTime; // How much time has passed between logic steps
 
 bool transmitting = false; // Are we transmitting packets?
 
-static unsigned long PACKET_GAP_TIME = 1000;
-static int TEAM_ID = 1073;
+// Definitions
+#define PACKET_GAP_TIME 1000
+#define TEAM_ID 1073
 
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
-
-// Release servo
-Servo M2;
-#define M2_PWM_PIN 20
-#define M2_MOS_PIN 26
-#define M2_CLOSED 30
-#define M2_OPEN 40
 
 // Release servo
 Servo M1;
@@ -113,22 +164,29 @@ Servo M1;
 #define M1_CLOSED 0
 #define M1_OPEN 40
 
+// Release servo
+Servo M2;
+#define M2_PWM_PIN 20
+#define M2_MOS_PIN 26
+#define M2_CLOSED 30
+#define M2_OPEN 40
+
 int packetCount;
 
 void setup() {
   Serial.begin(9600); // Open serial line TODO: Remove this in favor of xbee
 
-  // M4 Setup
-  M2.attach(M2_PWM_PIN);
-  M2.write(M2_CLOSED);
+  // M2 Setup
   pinMode(M2_MOS_PIN, OUTPUT);
+  M2.attach(M2_PWM_PIN);
   digitalWrite(M2_MOS_PIN, HIGH);
+  M2.write(M2_CLOSED);
 
   // M5 setup
   M1.attach(M1_PWM_PIN, 427, 2400);
-  M1.write(M1_CLOSED);
+  M1.write(M1_OPEN);
   pinMode(M1_MOS_PIN, OUTPUT);
-  digitalWrite(M1_MOS_PIN, LOW);
+  digitalWrite(M1_MOS_PIN, HIGH);
 
   flightState = LowPower;
 
@@ -136,14 +194,10 @@ void setup() {
   lastAltitude = 0.0;
   vertVelocity = 0.0;
 
-
   temperature = 0;
   pressure = 0;
 
   packetCount = 0;
-
-  // TODO: Impliment a command to pull time from gs
-  //currentTime = createBlankTime();
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
@@ -153,6 +207,11 @@ void setup() {
   Wire1.setSCL(15);
   Wire1.begin();
 
+  // Openlog Serial
+  Serial2.setTX(8);
+  Serial2.setRX(9);
+  Serial2.begin(9600);
+
   // Begin BMP
   if (!bmp.begin_I2C(0x77, &Wire1)) {
     while (true) {
@@ -161,6 +220,17 @@ void setup() {
     }
   }
   bmp.performReading();
+
+  delay(100);
+
+  // Begin GPS
+  if (gps.begin(Wire1) == false) //Connect to the Ublox module using Wire port
+  {
+    while (true) {
+      Serial.println("GPS ERROR");
+      delay(1000);
+    }
+  }
 
   calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
 };
@@ -183,7 +253,7 @@ void loop() {
     altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
 
-    // Analog
+    // Analog read
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
@@ -241,12 +311,14 @@ void loop() {
       }
     }
 
-    
-
+    gpsTime.hours = gps.getHour();
+    gpsTime.minutes = gps.getMinute();
+    gpsTime.seconds = gps.getSecond();
 
     // Fill the fields of the telemetry packet
     telemetry.teamId = TEAM_ID;
     telemetry.missionTime = currentTime;
+    telemetry.packetCount = packetCount;
     telemetry.computerMode = Flight;
     telemetry.flightState = flightState;
     telemetry.altitude = altitude;
@@ -257,9 +329,9 @@ void loop() {
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.gpsTime = createBlankTime(); // TODO: Impliment GPS
     telemetry.gpsAltitude = 0;
-    telemetry.latitude = 0;
-    telemetry.longitude = 0;
-    telemetry.satConnections = 10;
+    telemetry.latitude = gps.getLatitude();
+    telemetry.longitude = gps.getLongitude();
+    telemetry.satConnections = gps.getSIV();
     telemetry.tiltX = 0;
     telemetry.tiltY = 90;
 
@@ -271,9 +343,16 @@ void loop() {
     uint8_t packetBytes[packet.length()];
     packet.getBytes(packetBytes, packet.length());
 
-    // Send packet TODO: Impliment on XBEE
-    Serial.write(packetBytes, packet.length());
-    Serial.print("\n");
+    if (transmitting) {
+      // Send packet TODO: Impliment on XBEE
+      Serial.write(packetBytes, packet.length());
+      Serial.print("\n");
+
+      Serial2.write(packetBytes, packet.length());
+      Serial2.print("\n");
+
+      packetCount++;
+    }
 
     // Update timing
     deltaTime = 0;
