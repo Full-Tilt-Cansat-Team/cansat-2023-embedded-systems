@@ -66,9 +66,10 @@ struct TelemetryPacket {
   String cmdEcho;
 };
 
-// Will help in transitioning to XBEE TODO: CHANGE BEFOREL LAUNCH
+// Will help in transitioning to XBEE
 void transmit(String toTransmit) {
   Serial.println(toTransmit);
+  Serial1.println(toTransmit);
 }
 
 // Flight-time variables
@@ -99,7 +100,7 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
-bool transmitting = false; // Are we transmitting packets?
+bool transmitting = true; // Are we transmitting packets?
 
 // Definitions
 #define PACKET_GAP_TIME 1000
@@ -108,19 +109,19 @@ bool transmitting = false; // Are we transmitting packets?
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
 
-// Release servo
-Servo M1;
-#define M1_PWM_PIN 19
-#define M1_MOS_PIN 22
-#define M1_CLOSED 0
-#define M1_OPEN 40
+// Parachute servo M1
+Servo ParachuteServo;
+#define PARACHUTE_PWM_PIN 19
+#define PARACHUTE_MOS_PIN 22
+#define PARACHUTE_CLOSED 0
+#define PARACHUTE_OPEN 100
 
 // Release servo
-Servo M2;
-#define M2_PWM_PIN 20
-#define M2_MOS_PIN 26
-#define M2_CLOSED 30
-#define M2_OPEN 40
+Servo ReleaseServo;
+#define RELEASE_PWM_PIN 20
+#define RELEASE_MOS_PIN 26
+#define RELEASE_CLOSED 0
+#define RELEASE_OPEN 40
 
 int packetCount;
 
@@ -135,8 +136,8 @@ class CommandHandler {
   }
 
   void addToBuffer() {
-    while (Serial.available() > 0) {
-      char c = (char)Serial.read();
+    while (Serial1.available() > 0) {
+      char c = (char)Serial1.read();
       Serial.print(c);
     if (c == ';') {
         Serial.print("\n");
@@ -172,7 +173,13 @@ class CommandHandler {
       CAL(arg);
     } else if (cmd == "ECHO") {
       ECHO(arg);
+    } else if (cmd == "ST") {
+      ST(arg);
+    } else if (cmd == "FSS") {
+      FSS(arg);
     }
+
+    telemetry.cmdEcho = String(cmd);
   }
 
   void ECHO(String arg) {
@@ -190,6 +197,30 @@ class CommandHandler {
   void CAL(String arg) {
     calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
   }
+
+  void ST(String arg) {
+    currentTime.hours = atoi(arg.substring(0, 2).c_str());
+    currentTime.minutes = atoi(arg.substring(3,5).c_str());
+    currentTime.seconds = (float)atoi(arg.substring(6,8).c_str());
+  }
+
+  void FSS(String arg) {
+    if (arg == "LOW_POWER") {
+      flightState = LowPower;
+    } else if (arg == "PRE_LAUNCH") {
+      flightState = PreLaunch;
+    } else if (arg == "LAUNCH") {
+      flightState = Launch;
+    } else if (arg == "PEAK") {
+      flightState = Peak;
+    } else if (arg == "DEPLOYMENT") {
+      flightState = Deployment;
+    } else if (arg == "PARACHUTE") {
+      flightState = Parachute;
+    } else if (arg == "LANDED") {
+      flightState = Landed;
+    }
+  }
 };
 
 // Commander for the flight computer
@@ -197,18 +228,21 @@ CommandHandler commander;
 
 void setup() {
   Serial.begin(9600); // Open serial line TODO: Remove this in favor of xbee
+  Serial1.setTX(0);
+  Serial1.setRX(1);
+  Serial1.begin(9600); // Start Xbee Line
 
-  // M2 Setup
-  pinMode(M2_MOS_PIN, OUTPUT);
-  M2.attach(M2_PWM_PIN);
-  digitalWrite(M2_MOS_PIN, HIGH);
-  M2.write(M2_CLOSED);
+  // Release Setup
+  pinMode(RELEASE_MOS_PIN, OUTPUT);
+  ReleaseServo.attach(RELEASE_PWM_PIN, 420, 2400);
+  digitalWrite(RELEASE_MOS_PIN, LOW);
+  ReleaseServo.write(RELEASE_CLOSED);
 
-  // M5 setup
-  M1.attach(M1_PWM_PIN, 427, 2400);
-  M1.write(M1_OPEN);
-  pinMode(M1_MOS_PIN, OUTPUT);
-  digitalWrite(M1_MOS_PIN, HIGH);
+  // Parachute Setup
+  ParachuteServo.attach(PARACHUTE_PWM_PIN, 420, 2400);
+  ParachuteServo.write(PARACHUTE_CLOSED);
+  pinMode(PARACHUTE_MOS_PIN, OUTPUT);
+  digitalWrite(PARACHUTE_MOS_PIN, LOW);
 
   flightState = LowPower;
 
@@ -254,8 +288,6 @@ void setup() {
     }
   }
 
-  calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
-
   // Create command handler
   commander = CommandHandler();
 };
@@ -291,8 +323,8 @@ void loop() {
         // Do nothing, and don't do flight logic
       } else if (flightState == PreLaunch) {
 
-        // When 10m passed and velocity greater than 10m/s, move to launch
-        if (altitude >= 10.0 && vertVelocity >= 10.0) {
+        // When 10m passed and velocity greater tha3n 10m/s, move to launch
+        if (altitude >= 10.0 && vertVelocity >= 0.0) {
           // Start camera recording (TODO)
           // Start transmitting packets
           transmitting = true;
@@ -300,12 +332,22 @@ void loop() {
           flightState = Launch;
         }
 
+        // Keep servos on
+        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+
       } else if (flightState == Launch) {
 
         // When above 300m, transition to this stage (present to avoid accidental movment directly into landing stage)
         if (altitude >= 300.0) {
           flightState = Peak;
         }
+
+        // Servos on and closed
+        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+        ParachuteServo.write(PARACHUTE_CLOSED);
+        ReleaseServo.write(RELEASE_CLOSED);
 
       } else if (flightState == Peak) {
 
@@ -316,14 +358,29 @@ void loop() {
           flightState = Deployment;
         }
 
+        // Servos on and closed
+        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+        ParachuteServo.write(PARACHUTE_CLOSED);
+        ReleaseServo.write(RELEASE_CLOSED);
+
       } else if (flightState == Deployment) {
 
         // Move to parachute state when below 200m and negative velocity
         if (altitude < 200.0 && vertVelocity < 0.0) {
-          // Deploy parachute (TODO)
           // Move to chute stage
           flightState = Parachute;
+
+          // Open chute early
+          ParachuteServo.write(PARACHUTE_OPEN);
+          digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         }
+
+        // Release servo open
+        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+        ParachuteServo.write(PARACHUTE_CLOSED);
+        ReleaseServo.write(RELEASE_OPEN);
 
       } else if (flightState == Parachute) {
 
@@ -333,7 +390,13 @@ void loop() {
           flightState = Landed;
 
           // Execute wacky subroutine (TODO)
-        } 
+        }
+
+        // Chute servo open
+        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+        ParachuteServo.write(PARACHUTE_OPEN);
+        ReleaseServo.write(RELEASE_OPEN);
 
       }
     }
@@ -371,12 +434,7 @@ void loop() {
     packet.getBytes(packetBytes, packet.length());
 
     if (transmitting) {
-      // Send packet TODO: Impliment on XBEE
-      Serial.write(packetBytes, packet.length());
-      Serial.print("\n");
-
-      Serial2.write(packetBytes, packet.length());
-      Serial2.print("\n");
+      transmit(packet);
 
       packetCount++;
     }
@@ -435,17 +493,17 @@ String assemblePacket(TelemetryPacket telemetry) {
   if (telemetry.flightState == LowPower) {
     packet += "LOW_POWER";
   } else if (telemetry.flightState == PreLaunch) {
-    packet += "FS0";
+    packet += "PRE_LAUNCH";
   } else if (telemetry.flightState == Launch) {
-    packet += "FS1";
+    packet += "LAUNCH";
   } else if (telemetry.flightState == Peak) {
-    packet += "FS2";
+    packet += "PEAK";
   } else if (telemetry.flightState == Deployment) {
-    packet += "FS3";
+    packet += "DEPLOYMENT";
   } else if (telemetry.flightState == Parachute) {
-    packet += "FS4";
+    packet += "PARACHUTE";
   } else if (telemetry.flightState == Landed) {
-    packet += "FS5";
+    packet += "LANDED";
   }
   packet += ",";
 
@@ -500,7 +558,7 @@ String assemblePacket(TelemetryPacket telemetry) {
   packet += String(telemetry.tiltY, 2);
   packet += ",";
 
-  packet += "CMD_ECHO"; //TODO: Impliment this
+  packet += telemetry.cmdEcho;
   packet += ",,";
 
   return packet;
