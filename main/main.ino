@@ -70,6 +70,7 @@ struct TelemetryPacket {
 void transmit(String toTransmit) {
   Serial.println(toTransmit);
   Serial1.println(toTransmit);
+  Serial2.println(toTransmit);
 }
 
 // Flight-time variables
@@ -290,6 +291,10 @@ void setup() {
 
   // Create command handler
   commander = CommandHandler();
+
+  // Buzzer pin
+  pinMode(17, OUTPUT);
+  pinMode(18, OUTPUT);
 };
 
 void loop() {
@@ -338,8 +343,8 @@ void loop() {
 
       } else if (flightState == Launch) {
 
-        // When above 300m, transition to this stage (present to avoid accidental movment directly into landing stage)
-        if (altitude >= 300.0) {
+        // When above 550m, transition to this stage (present to avoid accidental movment directly into landing stage)
+        if (altitude >= 500.0) {
           flightState = Peak;
         }
 
@@ -352,8 +357,7 @@ void loop() {
       } else if (flightState == Peak) {
 
         // Peak stage transitions to deployment when below 500m and velocity is <0m/s
-        if (altitude <= 500.0 && vertVelocity < 0.0) {
-          // Deploy probe and heatshield (TODO)
+        if (altitude < 400.0) {
           // Move to deploymment state
           flightState = Deployment;
         }
@@ -367,7 +371,7 @@ void loop() {
       } else if (flightState == Deployment) {
 
         // Move to parachute state when below 200m and negative velocity
-        if (altitude < 200.0 && vertVelocity < 0.0) {
+        if (altitude < 200.0) {
           // Move to chute stage
           flightState = Parachute;
 
@@ -385,7 +389,7 @@ void loop() {
       } else if (flightState == Parachute) {
 
         // Just wait until velocity is less than 2
-        if (vertVelocity < 2.0 && vertVelocity > -2.0) {
+        if (altitude < 10) {
           // Move to landed state
           flightState = Landed;
 
@@ -398,6 +402,10 @@ void loop() {
         ParachuteServo.write(PARACHUTE_OPEN);
         ReleaseServo.write(RELEASE_OPEN);
 
+      } else if (flightState == Landed) {
+      // Beacons
+      digitalWrite(17, HIGH);
+      digitalWrite(18, HIGH);
       }
     }
 
