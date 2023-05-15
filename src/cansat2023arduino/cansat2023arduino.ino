@@ -2,10 +2,8 @@
 Libraries
 */
 #include "Adafruit_BMP3XX.h"
-#include "SparkFun_Ublox_Arduino_Library.h"
 #include <Wire.h>
 #include <Servo.h>
-#include <Adafruit_BNO055.h>
 
 /*
 Custom data types
@@ -67,20 +65,12 @@ struct TelemetryPacket {
   String cmdEcho;
 };
 
-// Will help in transitioning to XBEE
-void transmit(String toTransmit) {
-  Serial.println(toTransmit);
-  Serial1.println(toTransmit);
-  Serial2.println(toTransmit);
-}
-
 // Flight-time variables
 FlightState flightState; // Holds the determinant for state change logic
 
 TelemetryPacket telemetry; // Holds telemetry packets
 
 TimeStruct currentTime; // Holds global time
-TimeStruct gpsTime; // Time as seen by GPS
 
 float altitude; // Altitude of cansat
 float lastAltitude; // Altitude at last logic step
@@ -92,9 +82,6 @@ float pressure; // Pressure (hPa)
 float voltage; // Voltage (volts)
 int adcVol; // voltage (unitless)
 
-SFE_UBLOX_GPS gps; // gps
-
-//Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire1);
 
 Adafruit_BMP3XX bmp; // BMP388 Sensor for pressure/temperature
 #define SEALEVELPRESSURE_HPA 1000
@@ -104,149 +91,44 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
-bool transmitting = true; // Are we transmitting packets?
+bool transmitting = false; // Are we transmitting packets?
 
-// Definitions
-#define PACKET_GAP_TIME 1000
-#define TEAM_ID 1073
+static unsigned long PACKET_GAP_TIME = 1000;
+static int TEAM_ID = 1073;
 
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
 
-// Parachute servo M1
-Servo ParachuteServo;
-#define PARACHUTE_PWM_PIN 19
-#define PARACHUTE_MOS_PIN 22
-#define PARACHUTE_CLOSED 0
-#define PARACHUTE_OPEN 100
+// Release servo
+Servo M2;
+#define M2_PWM_PIN 20
+#define M2_MOS_PIN 26
+#define M2_CLOSED 30
+#define M2_OPEN 40
 
 // Release servo
-Servo ReleaseServo;
-#define RELEASE_PWM_PIN 20
-#define RELEASE_MOS_PIN 26
-#define RELEASE_CLOSED 0
-#define RELEASE_OPEN 40
+Servo M1;
+#define M1_PWM_PIN 19
+#define M1_MOS_PIN 22
+#define M1_CLOSED 0
+#define M1_OPEN 40
 
 int packetCount;
 
-class CommandHandler {
-  public:
-  String buffer;
-  String command;
-  String arg;
-
-  CommandHandler() {
-    buffer = "";
-  }
-
-  void addToBuffer() {
-    while (Serial1.available() > 0) {
-      char c = (char)Serial1.read();
-      Serial.print(c);
-    if (c == ';') {
-        Serial.print("\n");
-        detectCommand(buffer);
-        buffer = "";
-      } else {
-        buffer += (char)c;
-      }
-    }
-  }
-
-  void detectCommand(String buffer) {
-    // find the locations of the commas
-    int first_comma = buffer.indexOf(',');
-    int second_comma = buffer.indexOf(',', first_comma + 1);
-    int third_comma = buffer.indexOf(',', second_comma + 1);
-
-    String cmd = buffer.substring(second_comma + 1, third_comma);
-    Serial.print("COMMAND: ");
-    Serial.print("|");
-    Serial.print(cmd);
-    Serial.println("|");
-    String arg = "";
-    if (third_comma != -1) {
-      arg = buffer.substring(third_comma+1);
-      Serial.print("ARG: ");
-      Serial.println(arg);
-    }
-
-    if (cmd == "CX") {
-      CX(arg);
-    } else if (cmd == "CAL") {
-      CAL(arg);
-    } else if (cmd == "ECHO") {
-      ECHO(arg);
-    } else if (cmd == "ST") {
-      ST(arg);
-    } else if (cmd == "FSS") {
-      FSS(arg);
-    }
-
-    telemetry.cmdEcho = String(cmd);
-  }
-
-  void ECHO(String arg) {
-    transmit(arg);
-  }
-
-  void CX(String arg) {
-    if (arg == "ON") {
-      transmitting = true;
-    } else {
-      transmitting = false;
-    }
-  }
-
-  void CAL(String arg) {
-    calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
-  }
-
-  void ST(String arg) {
-    currentTime.hours = atoi(arg.substring(0, 2).c_str());
-    currentTime.minutes = atoi(arg.substring(3,5).c_str());
-    currentTime.seconds = (float)atoi(arg.substring(6,8).c_str());
-  }
-
-  void FSS(String arg) {
-    if (arg == "LOW_POWER") {
-      flightState = LowPower;
-    } else if (arg == "PRE_LAUNCH") {
-      flightState = PreLaunch;
-    } else if (arg == "LAUNCH") {
-      flightState = Launch;
-    } else if (arg == "PEAK") {
-      flightState = Peak;
-    } else if (arg == "DEPLOYMENT") {
-      flightState = Deployment;
-    } else if (arg == "PARACHUTE") {
-      flightState = Parachute;
-    } else if (arg == "LANDED") {
-      flightState = Landed;
-    }
-  }
-};
-
-// Commander for the flight computer
-CommandHandler commander;
-
 void setup() {
   Serial.begin(9600); // Open serial line TODO: Remove this in favor of xbee
-  Serial1.setTX(0);
-  Serial1.setRX(1);
-  Serial1.begin(9600); // Start Xbee Line
 
-  // Release Setup
-  pinMode(RELEASE_MOS_PIN, OUTPUT);
-  ReleaseServo.attach(RELEASE_PWM_PIN, 420, 2400);
-  digitalWrite(RELEASE_MOS_PIN, LOW);
-  ReleaseServo.write(RELEASE_CLOSED);
+  // M4 Setup
+  M2.attach(M2_PWM_PIN);
+  M2.write(M2_CLOSED);
+  pinMode(M2_MOS_PIN, OUTPUT);
+  digitalWrite(M2_MOS_PIN, HIGH);
 
-  // Parachute Setup
-  ParachuteServo.attach(PARACHUTE_PWM_PIN, 420, 2400);
-  ParachuteServo.write(PARACHUTE_CLOSED);
-  pinMode(PARACHUTE_MOS_PIN, OUTPUT);
-  digitalWrite(PARACHUTE_MOS_PIN, LOW);
+  // M5 setup
+  M1.attach(M1_PWM_PIN, 427, 2400);
+  M1.write(M1_CLOSED);
+  pinMode(M1_MOS_PIN, OUTPUT);
+  digitalWrite(M1_MOS_PIN, LOW);
 
   flightState = LowPower;
 
@@ -254,10 +136,14 @@ void setup() {
   lastAltitude = 0.0;
   vertVelocity = 0.0;
 
+
   temperature = 0;
   pressure = 0;
 
   packetCount = 0;
+
+  // TODO: Impliment a command to pull time from gs
+  //currentTime = createBlankTime();
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
@@ -266,11 +152,6 @@ void setup() {
   Wire1.setSDA(14);
   Wire1.setSCL(15);
   Wire1.begin();
-
-  // Openlog Serial
-  Serial2.setTX(8);
-  Serial2.setRX(9);
-  Serial2.begin(9600);
 
   // Begin BMP
   if (!bmp.begin_I2C(0x77, &Wire1)) {
@@ -281,31 +162,7 @@ void setup() {
   }
   bmp.performReading();
 
-  delay(100);
-
-  // Begin GPS
-  if (gps.begin(Wire1) == false) //Connect to the Ublox module using Wire port
-  {
-    while (true) {
-      Serial.println("GPS ERROR");
-      delay(1000);
-    }
-  }
-
-  /* Initialise the sensor 
-  if (!bno.begin())
-  {
-    /* There was a problem detecting the BNO055 ... check your connections 
-    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-    while (1);
-  }*/
-
-  // Create command handler
-  commander = CommandHandler();
-
-  // Buzzer pin
-  pinMode(17, OUTPUT);
-  pinMode(18, OUTPUT);
+  calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
 };
 
 void loop() {
@@ -326,12 +183,10 @@ void loop() {
     altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
 
-    // Analog read
+    // Analog
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
-
-    commander.addToBuffer();
     
     // Flight state changes
     {
@@ -339,8 +194,8 @@ void loop() {
         // Do nothing, and don't do flight logic
       } else if (flightState == PreLaunch) {
 
-        // When 10m passed and velocity greater tha3n 10m/s, move to launch
-        if (altitude >= 10.0 && vertVelocity >= 0.0) {
+        // When 10m passed and velocity greater than 10m/s, move to launch
+        if (altitude >= 10.0 && vertVelocity >= 10.0) {
           // Start camera recording (TODO)
           // Start transmitting packets
           transmitting = true;
@@ -348,90 +203,50 @@ void loop() {
           flightState = Launch;
         }
 
-        // Keep servos on
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
-        digitalWrite(RELEASE_MOS_PIN, HIGH);
-
       } else if (flightState == Launch) {
 
-        // When above 550m, transition to this stage (present to avoid accidental movment directly into landing stage)
-        if (altitude >= 500.0) {
+        // When above 300m, transition to this stage (present to avoid accidental movment directly into landing stage)
+        if (altitude >= 300.0) {
           flightState = Peak;
         }
-
-        // Servos on and closed
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
-        digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
-        ReleaseServo.write(RELEASE_CLOSED);
 
       } else if (flightState == Peak) {
 
         // Peak stage transitions to deployment when below 500m and velocity is <0m/s
-        if (altitude < 400.0) {
+        if (altitude <= 500.0 && vertVelocity < 0.0) {
+          // Deploy probe and heatshield (TODO)
           // Move to deploymment state
           flightState = Deployment;
         }
 
-        // Servos on and closed
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
-        digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
-        ReleaseServo.write(RELEASE_CLOSED);
-
       } else if (flightState == Deployment) {
 
         // Move to parachute state when below 200m and negative velocity
-        if (altitude < 200.0) {
+        if (altitude < 200.0 && vertVelocity < 0.0) {
+          // Deploy parachute (TODO)
           // Move to chute stage
           flightState = Parachute;
-
-          // Open chute early
-          ParachuteServo.write(PARACHUTE_OPEN);
-          digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         }
-
-        // Release servo open
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
-        digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
-        ReleaseServo.write(RELEASE_OPEN);
 
       } else if (flightState == Parachute) {
 
         // Just wait until velocity is less than 2
-        if (altitude < 10) {
+        if (vertVelocity < 2.0 && vertVelocity > -2.0) {
           // Move to landed state
           flightState = Landed;
 
           // Execute wacky subroutine (TODO)
-        }
+        } 
 
-        // Chute servo open
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
-        digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_OPEN);
-        ReleaseServo.write(RELEASE_OPEN);
-
-      } else if (flightState == Landed) {
-      // Beacons
-      digitalWrite(17, HIGH);
-      digitalWrite(18, HIGH);
       }
     }
 
-    gpsTime.hours = gps.getHour();
-    gpsTime.minutes = gps.getMinute();
-    gpsTime.seconds = gps.getSecond();
+    
 
-    //sensors_event_t orientationData;
-
-    //bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
 
     // Fill the fields of the telemetry packet
     telemetry.teamId = TEAM_ID;
     telemetry.missionTime = currentTime;
-    telemetry.packetCount = packetCount;
     telemetry.computerMode = Flight;
     telemetry.flightState = flightState;
     telemetry.altitude = altitude;
@@ -442,11 +257,11 @@ void loop() {
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.gpsTime = createBlankTime(); // TODO: Impliment GPS
     telemetry.gpsAltitude = 0;
-    telemetry.latitude = gps.getLatitude();
-    telemetry.longitude = gps.getLongitude();
-    telemetry.satConnections = gps.getSIV();
-    telemetry.tiltX = 0;//orientationData.orientation.x;
-    telemetry.tiltY = 0;//orientationData.orientation.y;
+    telemetry.latitude = 0;
+    telemetry.longitude = 0;
+    telemetry.satConnections = 10;
+    telemetry.tiltX = 0;
+    telemetry.tiltY = 90;
 
     // Assemble packet
     String packet = assemblePacket(telemetry);
@@ -456,11 +271,9 @@ void loop() {
     uint8_t packetBytes[packet.length()];
     packet.getBytes(packetBytes, packet.length());
 
-    if (transmitting) {
-      transmit(packet);
-
-      packetCount++;
-    }
+    // Send packet TODO: Impliment on XBEE
+    Serial.write(packetBytes, packet.length());
+    Serial.print("\n");
 
     // Update timing
     deltaTime = 0;
@@ -516,17 +329,17 @@ String assemblePacket(TelemetryPacket telemetry) {
   if (telemetry.flightState == LowPower) {
     packet += "LOW_POWER";
   } else if (telemetry.flightState == PreLaunch) {
-    packet += "PRE_LAUNCH";
+    packet += "FS0";
   } else if (telemetry.flightState == Launch) {
-    packet += "LAUNCH";
+    packet += "FS1";
   } else if (telemetry.flightState == Peak) {
-    packet += "PEAK";
+    packet += "FS2";
   } else if (telemetry.flightState == Deployment) {
-    packet += "DEPLOYMENT";
+    packet += "FS3";
   } else if (telemetry.flightState == Parachute) {
-    packet += "PARACHUTE";
+    packet += "FS4";
   } else if (telemetry.flightState == Landed) {
-    packet += "LANDED";
+    packet += "FS5";
   }
   packet += ",";
 
@@ -581,7 +394,7 @@ String assemblePacket(TelemetryPacket telemetry) {
   packet += String(telemetry.tiltY, 2);
   packet += ",";
 
-  packet += telemetry.cmdEcho;
+  packet += "CMD_ECHO"; //TODO: Impliment this
   packet += ",,";
 
   return packet;
