@@ -6,6 +6,7 @@ Libraries
 #include <Wire.h>
 #include <Servo.h>
 #include <Adafruit_BNO055.h>
+#include <Math.h>
 
 /*
 Custom data types
@@ -105,6 +106,9 @@ unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
 bool transmitting = true; // Are we transmitting packets?
+bool simulation = false; // Are we simulating?
+bool simulationArmed = false;
+float simulatedPressure; // Whats the simulated pressure?
 
 // Definitions
 #define PACKET_GAP_TIME 1000
@@ -181,6 +185,12 @@ class CommandHandler {
       ST(arg);
     } else if (cmd == "FSS") {
       FSS(arg);
+    } else if (cmd == "ST") {
+      ST(arg);
+    } else if (cmd == "SIM") {
+      SIM(arg);
+    } else if (cmd == "SIMP") {
+      SIMP(arg);
     }
 
     telemetry.cmdEcho = String(cmd);
@@ -223,6 +233,33 @@ class CommandHandler {
       flightState = Parachute;
     } else if (arg == "LANDED") {
       flightState = Landed;
+    }
+  }
+
+  void ST(String arg) {
+    int hour = buffer.substring(0, 2).toInt();
+    int minute = buffer.substring(3, 5).toInt();
+    float second = buffer.substring(6).toFloat();
+
+    currentTime.hours = hour;
+    currentTime.minutes = minute;
+    currentTime.seconds = second;
+  }
+
+  void SIM(String arg) {
+    if (arg == "ENABLE") {
+      simulationArmed = true;
+    } else if (arg == "ACTIVATE" && simulationArmed) {
+      simulation = true;
+    } else if (arg == "DISABLE") {
+      simulationArmed = false;
+      simulation = false;
+    }
+  }
+
+  void SIMP(String arg) {
+    if (simulation) {
+      simulatedPressure = arg.toFloat();
     }
   }
 };
@@ -292,13 +329,12 @@ void setup() {
     }
   }
 
-  /* Initialise the sensor 
+  // Initialise bno
   if (!bno.begin())
   {
-    /* There was a problem detecting the BNO055 ... check your connections 
     Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
     while (1);
-  }*/
+  }
 
   // Create command handler
   commander = CommandHandler();
@@ -322,9 +358,15 @@ void loop() {
     // Read pressure and temperature from BMP
     bmp.performReading();
     temperature = bmp.temperature;
-    pressure = bmp.pressure; // hPa
-    altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
+
+    if (!simulation) {
+      altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
+      pressure = bmp.pressure();
+    } else {
+      altitude = pressureToAltitude(simulatedPressure);
+      pressure = simulatedPressure;
+    }
 
     // Analog read
     adcVol = analogRead(ADC_GPIO_PIN);
@@ -369,6 +411,8 @@ void loop() {
 
         // Peak stage transitions to deployment when below 500m and velocity is <0m/s
         if (altitude < 400.0) {
+          // Update telemetry
+          telemetry.heatShieldState = Deployed;
           // Move to deploymment state
           flightState = Deployment;
         }
@@ -387,6 +431,7 @@ void loop() {
           flightState = Parachute;
 
           // Open chute early
+          telemetry.parachuteState = Deployed;
           ParachuteServo.write(PARACHUTE_OPEN);
           digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         }
@@ -424,9 +469,9 @@ void loop() {
     gpsTime.minutes = gps.getMinute();
     gpsTime.seconds = gps.getSecond();
 
-    //sensors_event_t orientationData;
+    sensors_event_t orientationData;
 
-    //bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+    bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
 
     // Fill the fields of the telemetry packet
     telemetry.teamId = TEAM_ID;
@@ -440,6 +485,7 @@ void loop() {
     telemetry.mastState = NotDeployed;
     telemetry.temperature = temperature; // TODO: Impliment Temperature
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
+    telemetry.pressure = pressure;
     telemetry.gpsTime = createBlankTime(); // TODO: Impliment GPS
     telemetry.gpsAltitude = 0;
     telemetry.latitude = gps.getLatitude();
@@ -560,6 +606,9 @@ String assemblePacket(TelemetryPacket telemetry) {
   packet += String(telemetry.voltage, 1);
   packet += ",";
 
+  packet += String(telemetry.pressure, 2);
+  packet += ",";
+
   packet += formatTime(telemetry.gpsTime);
   packet += ",";
 
@@ -588,12 +637,27 @@ String assemblePacket(TelemetryPacket telemetry) {
 };
 
 // Function to conver pressure to altitude
-float pressToAltitude(float hPa) {
-  const float standardPressure = 1013.25;
-  const float lapseRate = 0.0065; // in K/m
+// The standard pressure at sea level in pascals
+const double p0 = 101325.0;
 
-  float altitude = 44330.0 * (1.0 - pow(hPa / standardPressure, 1.0 / 5.255));
-  return altitude;
+// The temperature lapse rate in K/m
+const double lapse = -0.0065;
+
+// The universal gas constant
+const double R = 8.31447;
+
+// The molar mass of dry air in kg/mol
+const double M = 0.0289644;
+
+// The gravitational acceleration in m/s^2
+const double g = 9.80665;
+
+// The standard temperature at sea level in K
+const double T0 = 288.15;
+
+double pressureToAltitude(float p) {
+  p *= 100;
+  return T0 / lapse * (1 - pow(p / p0, R * lapse / (g * M)));
 }
 
 // Creates a fresh time structure without logical garbage
