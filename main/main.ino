@@ -93,9 +93,13 @@ float pressure; // Pressure (hPa)
 float voltage; // Voltage (volts)
 int adcVol; // voltage (unitless)
 
+float gpsAltitude; // Altitude as measured by GPS (ASL)
+float latitude; // GPS read latitude
+float longitude; // GPS read longitude
+
 SFE_UBLOX_GPS gps; // gps
 
-//Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire1);
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire1);
 
 Adafruit_BMP3XX bmp; // BMP388 Sensor for pressure/temperature
 #define SEALEVELPRESSURE_HPA 1000
@@ -212,12 +216,6 @@ class CommandHandler {
     calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
   }
 
-  void ST(String arg) {
-    currentTime.hours = atoi(arg.substring(0, 2).c_str());
-    currentTime.minutes = atoi(arg.substring(3,5).c_str());
-    currentTime.seconds = (float)atoi(arg.substring(6,8).c_str());
-  }
-
   void FSS(String arg) {
     if (arg == "LOW_POWER") {
       flightState = LowPower;
@@ -328,12 +326,16 @@ void setup() {
       delay(1000);
     }
   }
+  gps.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+  gps.saveConfiguration(); //Save the current settings to flash and BBR
 
   // Initialise bno
   if (!bno.begin())
   {
-    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-    while (1);
+    while (true) {
+      Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+      delay(1000);
+    }
   }
 
   // Create command handler
@@ -362,11 +364,17 @@ void loop() {
 
     if (!simulation) {
       altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
-      pressure = bmp.pressure();
+      pressure = bmp.pressure;
     } else {
       altitude = pressureToAltitude(simulatedPressure);
       pressure = simulatedPressure;
     }
+
+    // Read GPS values
+    latitude = gps.getLatitude();
+    longitude = gps.getLongitude();
+    gpsAltitude = gps.getAltitude();
+
 
     // Analog read
     adcVol = analogRead(ADC_GPIO_PIN);
@@ -486,10 +494,16 @@ void loop() {
     telemetry.temperature = temperature; // TODO: Impliment Temperature
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.pressure = pressure;
-    telemetry.gpsTime = createBlankTime(); // TODO: Impliment GPS
-    telemetry.gpsAltitude = 0;
-    telemetry.latitude = gps.getLatitude();
-    telemetry.longitude = gps.getLongitude();
+
+    TimeStruct gpsTime;
+    gpsTime.hours = gps.getHour();
+    gpsTime.minutes = gps.getMinute();
+    gpsTime.seconds = (float)gps.getSecond();
+
+    telemetry.gpsTime = gpsTime;
+    telemetry.gpsAltitude = gpsAltitude;
+    telemetry.latitude = latitude;
+    telemetry.longitude = longitude;
     telemetry.satConnections = gps.getSIV();
     telemetry.tiltX = 0;//orientationData.orientation.x;
     telemetry.tiltY = 0;//orientationData.orientation.y;
