@@ -7,6 +7,7 @@ Libraries
 #include <Servo.h>
 #include <Adafruit_BNO055.h>
 #include <Math.h>
+#include <EEPROM.h>
 
 /*
 Custom data types
@@ -68,7 +69,17 @@ struct TelemetryPacket {
   String cmdEcho;
 };
 
-// Will help in transitioning to XBEE
+// Holds information in case of power loss
+struct BackupData {
+  int packets;
+  float calibrationAlt;
+  FlightState state;
+  TimeStruct time;
+};
+
+BackupData backup;
+
+// Will help in transitioning to XBEE (and logging)
 void transmit(String toTransmit) {
   Serial.println(toTransmit);
   Serial1.println(toTransmit);
@@ -115,7 +126,7 @@ bool simulationArmed = false;
 float simulatedPressure; // Whats the simulated pressure?
 
 // Definitions
-#define PACKET_GAP_TIME 1000
+#define PACKET_GAP_TIME 999
 #define TEAM_ID 1073
 
 // ADC pin for voltage
@@ -135,6 +146,12 @@ Servo ReleaseServo;
 #define RELEASE_CLOSED 0
 #define RELEASE_OPEN 40
 
+// Backup Location
+#define EEPROM_ADDR 0
+
+// Debug flags
+#define VERIFY_SENSORS false
+
 int packetCount;
 
 class CommandHandler {
@@ -150,6 +167,18 @@ class CommandHandler {
   void addToBuffer() {
     while (Serial1.available() > 0) {
       char c = (char)Serial1.read();
+      Serial.print(c);
+    if (c == ';') {
+        Serial.print("\n");
+        detectCommand(buffer);
+        buffer = "";
+      } else {
+        buffer += (char)c;
+      }
+    }
+
+    while (Serial.available() > 0) {
+      char c = (char)Serial.read();
       Serial.print(c);
     if (c == ';') {
         Serial.print("\n");
@@ -214,6 +243,7 @@ class CommandHandler {
 
   void CAL(String arg) {
     calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    backup.calibrationAlt = calibrationAltitude;
   }
 
   void FSS(String arg) {
@@ -235,13 +265,20 @@ class CommandHandler {
   }
 
   void ST(String arg) {
-    int hour = buffer.substring(0, 2).toInt();
-    int minute = buffer.substring(3, 5).toInt();
-    float second = buffer.substring(6).toFloat();
+    int hour = arg.substring(0, 2).toInt();
+    int minute = arg.substring(3, 5).toInt();
+    float second = arg.substring(6).toFloat();
 
     currentTime.hours = hour;
     currentTime.minutes = minute;
     currentTime.seconds = second;
+
+    backup.time = currentTime;
+    EEPROM.put(EEPROM_ADDR, backup);
+
+    Serial.println(arg.substring(0, 2));
+    Serial.println(arg.substring(3, 5));
+    Serial.println(arg.substring(6));
   }
 
   void SIM(String arg) {
@@ -266,7 +303,7 @@ class CommandHandler {
 CommandHandler commander;
 
 void setup() {
-  Serial.begin(9600); // Open serial line TODO: Remove this in favor of xbee
+  Serial.begin(115200); // Open serial line TODO: Remove this in favor of xbee
   Serial1.setTX(0);
   Serial1.setRX(1);
   Serial1.begin(9600); // Start Xbee Line
@@ -283,7 +320,17 @@ void setup() {
   pinMode(PARACHUTE_MOS_PIN, OUTPUT);
   digitalWrite(PARACHUTE_MOS_PIN, LOW);
 
-  flightState = LowPower;
+  // Power on to EEPROM
+  EEPROM.begin(4096);
+
+  // Load EEPROM backups
+  EEPROM.get(EEPROM_ADDR, backup);
+
+  // Place into logic spots
+  flightState = backup.state;
+  packetCount = backup.packets;
+  currentTime = backup.time;
+  calibrationAltitude = backup.calibrationAlt;
 
   altitude = 0.0;
   lastAltitude = 0.0;
@@ -291,8 +338,6 @@ void setup() {
 
   temperature = 0;
   pressure = 0;
-
-  packetCount = 0;
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
@@ -308,7 +353,7 @@ void setup() {
   Serial2.begin(9600);
 
   // Begin BMP
-  if (!bmp.begin_I2C(0x77, &Wire1)) {
+  if (!bmp.begin_I2C(0x77, &Wire1) && VERIFY_SENSORS) {
     while (true) {
       Serial.println("BMP ERROR");
       delay(1000);
@@ -319,7 +364,7 @@ void setup() {
   delay(100);
 
   // Begin GPS
-  if (gps.begin(Wire1) == false) //Connect to the Ublox module using Wire port
+  if (gps.begin(Wire1) == false && VERIFY_SENSORS) //Connect to the Ublox module using Wire port
   {
     while (true) {
       Serial.println("GPS ERROR");
@@ -330,13 +375,15 @@ void setup() {
   gps.saveConfiguration(); //Save the current settings to flash and BBR
 
   // Initialise bno
-  if (!bno.begin())
+  if (!bno.begin() && VERIFY_SENSORS)
   {
     while (true) {
-      Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+      Serial.println("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
       delay(1000);
     }
   }
+
+  transmit("BOOTED");
 
   // Create command handler
   commander = CommandHandler();
@@ -491,7 +538,7 @@ void loop() {
     telemetry.heatShieldState = NotDeployed;
     telemetry.parachuteState = NotDeployed;
     telemetry.mastState = NotDeployed;
-    telemetry.temperature = temperature; // TODO: Impliment Temperature
+    telemetry.temperature = temperature;
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.pressure = pressure;
 
@@ -521,6 +568,13 @@ void loop() {
 
       packetCount++;
     }
+
+    // Update backups
+    backup.packets = packetCount;
+    backup.time = currentTime;
+    backup.state = flightState;
+    EEPROM.put(EEPROM_ADDR, backup);
+    EEPROM.commit();
 
     // Update timing
     deltaTime = 0;
