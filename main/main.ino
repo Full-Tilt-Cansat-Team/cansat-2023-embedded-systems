@@ -120,13 +120,15 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
+unsigned long deltaTimeGPS;
+
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
 bool simulationArmed = false;
 float simulatedPressure; // Whats the simulated pressure?
 
 // Definitions
-#define PACKET_GAP_TIME 999
+#define PACKET_GAP_TIME 900
 #define TEAM_ID 1073
 
 // ADC pin for voltage
@@ -299,6 +301,8 @@ class CommandHandler {
   }
 };
 
+class 
+
 // Commander for the flight computer
 CommandHandler commander;
 
@@ -341,6 +345,8 @@ void setup() {
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
+  deltaTimeGPS = 99999999999; // Get GPS time right away
+
 
   // Setup I2c
   Wire1.setSDA(14);
@@ -398,16 +404,22 @@ void loop() {
   currentCycleTime = millis();
   cycleTimeGap = currentCycleTime - lastCycleTime;
   deltaTime += cycleTimeGap;
+  deltaTimeGPS += cycleTimeGap;
 
   // If one second has passed, perform flight logic
   if (deltaTime >= PACKET_GAP_TIME) {
     // Calculate current time
     updateTime(currentTime, deltaTime);
+    updateTime(gpsTime, deltaTime);
+
+    Serial.println("Time updated");
 
     // Read pressure and temperature from BMP
     bmp.performReading();
     temperature = bmp.temperature;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
+
+    Serial.println("BMP READ");
 
     if (!simulation) {
       altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
@@ -417,16 +429,21 @@ void loop() {
       pressure = simulatedPressure;
     }
 
+    Serial.println("Altitude gotten");
+
     // Read GPS values
-    latitude = gps.getLatitude();
-    longitude = gps.getLongitude();
+    latitude = (float)gps.getLatitude() / 10000000;
+    longitude = (float)gps.getLongitude() / 10000000;
     gpsAltitude = gps.getAltitude();
 
+    Serial.println("GPS GOT");
 
     // Analog read
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
+
+    Serial.println("VOLTAGE READ");
 
     commander.addToBuffer();
     
@@ -434,6 +451,8 @@ void loop() {
     {
       if (flightState == LowPower) {
         // Do nothing, and don't do flight logic
+        digitalWrite(17, LOW);
+        digitalWrite(18, LOW);
       } else if (flightState == PreLaunch) {
 
         // When 10m passed and velocity greater tha3n 10m/s, move to launch
@@ -452,7 +471,7 @@ void loop() {
       } else if (flightState == Launch) {
 
         // When above 550m, transition to this stage (present to avoid accidental movment directly into landing stage)
-        if (altitude >= 500.0) {
+        if (altitude >= 550.0) {
           flightState = Peak;
         }
 
@@ -465,7 +484,7 @@ void loop() {
       } else if (flightState == Peak) {
 
         // Peak stage transitions to deployment when below 500m and velocity is <0m/s
-        if (altitude < 400.0) {
+        if (altitude < 500.0) {
           // Update telemetry
           telemetry.heatShieldState = Deployed;
           // Move to deploymment state
@@ -514,19 +533,21 @@ void loop() {
         ReleaseServo.write(RELEASE_OPEN);
 
       } else if (flightState == Landed) {
-      // Beacons
-      digitalWrite(17, HIGH);
-      digitalWrite(18, HIGH);
+        // Beacons
+        digitalWrite(17, HIGH);
+        digitalWrite(18, HIGH);
       }
     }
 
-    gpsTime.hours = gps.getHour();
-    gpsTime.minutes = gps.getMinute();
-    gpsTime.seconds = gps.getSecond();
+    Serial.println("FLIGHT STATE CHANGES");
+
+    Serial.println("TIME GOTTEN");
 
     sensors_event_t orientationData;
 
     bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+
+    Serial.println("ORIENTATION FETCHED");
 
     // Fill the fields of the telemetry packet
     telemetry.teamId = TEAM_ID;
@@ -542,11 +563,6 @@ void loop() {
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.pressure = pressure;
 
-    TimeStruct gpsTime;
-    gpsTime.hours = gps.getHour();
-    gpsTime.minutes = gps.getMinute();
-    gpsTime.seconds = (float)gps.getSecond();
-
     telemetry.gpsTime = gpsTime;
     telemetry.gpsAltitude = gpsAltitude;
     telemetry.latitude = latitude;
@@ -555,8 +571,12 @@ void loop() {
     telemetry.tiltX = 0;//orientationData.orientation.x;
     telemetry.tiltY = 0;//orientationData.orientation.y;
 
+    Serial.println("TELEMETRY FETCHED");
+
     // Assemble packet
     String packet = assemblePacket(telemetry);
+
+    Serial.println("TELEMETRY ASSEMBLED");
 
     // Convert to bytes
     // TODO: Convert all strings in here to bytes natively
@@ -569,6 +589,8 @@ void loop() {
       packetCount++;
     }
 
+    Serial.println("TRANSMITTED");
+
     // Update backups
     backup.packets = packetCount;
     backup.time = currentTime;
@@ -576,8 +598,20 @@ void loop() {
     EEPROM.put(EEPROM_ADDR, backup);
     EEPROM.commit();
 
+    Serial.println("UPDATED");
+    Serial.println(deltaTime);
+
+    Serial.println("");
+    Serial.println("");
+
     // Update timing
-    deltaTime = 0;
+    deltaTime = millis() - currentCycleTime;
+  }
+
+  if (deltaTimeGPS >= 60000) {
+    gpsTime.hours = gps.getHour();
+    gpsTime.minutes = gps.getMinute();
+    gpsTime.seconds = gps.getSecond();
   }
   
   lastCycleTime = currentCycleTime;
@@ -683,10 +717,10 @@ String assemblePacket(TelemetryPacket telemetry) {
   packet += String(telemetry.gpsAltitude, 1);
   packet += ",";
 
-  packet += String((int)telemetry.latitude);
+  packet += String(telemetry.latitude, 4);
   packet += ",";
 
-  packet += String((int)telemetry.longitude);
+  packet += String(telemetry.longitude, 4);
   packet += ",";
 
   packet += String(telemetry.satConnections);
