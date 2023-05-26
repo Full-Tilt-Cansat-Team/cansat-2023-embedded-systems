@@ -170,8 +170,8 @@ Servo ReleaseServo;
 #define RELEASE_PWM_PIN 15
 #define RELEASE_MOS_PIN 14
 #define RELEASE_CLOSED 0
-#define RELEASE_FALL 120
-#define RELEASE_PARACHUTE 180
+#define RELEASE_FALL 40
+#define RELEASE_PARACHUTE 100
 
 int packetCount;
 
@@ -269,6 +269,7 @@ class CommandHandler {
   void FSS(String arg) {
     if (arg == "LOW_POWER") {
       flightState = LowPower;
+      digitalWrite(RELEASE_MOS_PIN, LOW);
     } else if (arg == "PRE_LAUNCH") {
       flightState = PreLaunch;
     } else if (arg == "LAUNCH") {
@@ -571,10 +572,10 @@ void loop() {
     
     // Flight state changes
     if (flightState == LowPower) {
-      // Do nothing, and don't do flight logic
-    } else if (flightState == PreLaunch) {
       digitalWrite(19, LOW);
       digitalWrite(20, LOW);
+      // Do nothing, and don't do flight logic
+    } else if (flightState == PreLaunch) {
 
       // When 10m passed and velocity greater tha3n 10m/s, move to launch
       if (altitude >= 10.0 && vertVelocity >= 0.0) {
@@ -591,6 +592,8 @@ void loop() {
       }
 
       // Keep servos on
+      digitalWrite(RELEASE_MOS_PIN, LOW);
+      ReleaseServo.write(RELEASE_CLOSED);
       digitalWrite(RELEASE_MOS_PIN, HIGH);
 
       } else if (flightState == Launch) {
