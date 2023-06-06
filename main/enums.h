@@ -1,3 +1,5 @@
+#ifndef ENUMS
+#define ENUMS
 // Holds flight state
 enum FlightState {
   LowPower,
@@ -6,7 +8,8 @@ enum FlightState {
   Peak,
   Deployment,
   Parachute,
-  Landed
+  Landed,
+  ABORT
 };
 
 // Holds deployment states
@@ -26,3 +29,12 @@ enum FlightMode {
   Flight,
   Simulation
 };
+
+// Holds information regarding single and double-faults
+enum FaultDetected {
+  NoFault,
+  SingleFault,
+  DoubleFault
+};
+
+#endif

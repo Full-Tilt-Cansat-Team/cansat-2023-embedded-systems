@@ -12,6 +12,42 @@ Libraries
 #include "timing.h"
 #include "enums.h"
 
+// Debug flags
+#define VERIFY_SENSORS false
+
+// Definitions
+#define PACKET_GAP_TIME 995
+#define TEAM_ID 1073
+#define MAX_ABORT_TIME 
+
+// ADC pin for voltage
+#define ADC_GPIO_PIN 27
+
+// Release servo pins
+Servo ReleaseServo;
+#define RELEASE_PWM_PIN 15
+#define RELEASE_MOS_PIN 14
+#define RELEASE_CLOSED 155
+#define RELEASE_FALL 130
+#define RELEASE_PARACHUTE 0
+
+// Orientation servo pins
+Servo OrientationServo;
+#define ORIENT_PWM_PIN 11
+#define ORIENT_MOS_PIN 10
+
+// Flag servo pins
+Servo FlagServo;
+#define FLAG_PWM_PIN 4
+#define FLAG_MOS_PIN 3
+
+// Beacon pins
+#define BUZZER_MOS 19
+#define LED_MOS 20
+
+// Backup Memory location
+#define EEPROM_ADDR 0
+
 // Holds all information used in telemetry packets
 struct TelemetryPacket {
   int teamId;
@@ -46,12 +82,14 @@ struct TelemetryPacket {
   float orY;
   float orZ;
   float gsZ;
+  String faultMessage;
 };
 
 // Holds information in case of power loss
 struct BackupData {
   int packets;
   float calibrationAlt;
+  float gpsCalibrationAlt;
   FlightState state;
   TimeStruct time;
 };
@@ -88,6 +126,7 @@ float altitude; // Altitude of cansat
 float lastAltitude; // Altitude at last logic step
 float vertVelocity; // Velocity upwards
 float calibrationAltitude; // To find absolute
+float gpsCalibrationAltitude; // Finds relative altitude from gps
 
 float temperature; // Temperature (C)
 float pressure; // Pressure (hPa)
@@ -98,15 +137,15 @@ float gpsAltitude; // Altitude as measured by GPS (ASL)
 float latitude; // GPS read latitude
 float longitude; // GPS read longitude
 
+// Variables for the orientation(?)
 float orX;
 float orY;
 float orZ;
 float gsZ;
 
 SFE_UBLOX_GPS gps; // gps
-/// ADD GPS HERTZ SET
 
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire); //BNO055 for orientation sensing
 
 Adafruit_BMP3XX bmp; // BMP388 Sensor for pressure/temperature
 #define SEALEVELPRESSURE_HPA 1000
@@ -115,46 +154,12 @@ unsigned long currentCycleTime; // Used for time update every cycle
 unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
+unsigned long timeAbortEntered; // When the abort stage was entered
 
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
 bool simulationArmed = false; // Required to enable simulation mode
 float simulatedPressure; // Whats the simulated pressure?
-
-// Definitions
-#define PACKET_GAP_TIME 995
-#define TEAM_ID 1073
-
-// ADC pin for voltage
-#define ADC_GPIO_PIN 27
-
-// Release servo pins
-Servo ReleaseServo;
-#define RELEASE_PWM_PIN 15
-#define RELEASE_MOS_PIN 14
-#define RELEASE_CLOSED 155
-#define RELEASE_FALL 130
-#define RELEASE_PARACHUTE 0
-
-// Orientation servo pins
-Servo OrientationServo;
-#define ORIENT_PWM_PIN 11
-#define ORIENT_MOS_PIN 10
-
-// Flag servo pins
-Servo FlagServo;
-#define FLAG_PWM_PIN 4
-#define FLAG_MOS_PIN 3
-
-// Beacon pins
-#define BUZZER_MOS 19
-#define LED_MOS 20
-
-// Backup Memory location
-#define EEPROM_ADDR 0
-
-// Debug flags
-#define VERIFY_SENSORS false
 
 int packetCount;
 
@@ -259,7 +264,10 @@ class CommandHandler {
 
   void CAL(String arg) {
     calibrationAltitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    gpsCalibrationAltitude = gps.getAltitude();
+    
     backup.calibrationAlt = calibrationAltitude;
+    backup.gpsCalibrationAlt = gpsCalibrationAltitude;
   }
 
   void FSS(String arg) {
@@ -277,6 +285,8 @@ class CommandHandler {
       flightState = Parachute;
     } else if (arg == "LANDED") {
       flightState = Landed;
+    } else if (arg == "ABORT") {
+      flightState = ABORT;
     }
   }
 
@@ -489,12 +499,20 @@ Uprighting uprighter;
 // Commander for the flight computer
 CommandHandler commander;
 
+// Fault trackers
+FaultDetected bnoFault = NoFault;
+FaultDetected bmpFault = NoFault;
+FaultDetected gpsFault = NoFault;
+FaultDetected altitudeFault = NoFault;
+
 void setup() {
   Serial.begin(115200); // Open serial line to computer for umbilical
 
   Serial2.setTX(8);
   Serial2.setRX(9);
   Serial2.begin(9600); // Start Xbee Line for uplink
+
+  telemetry.faultMessage = ""; // No message for the moment
 
   // Release Servo Setup
   pinMode(RELEASE_MOS_PIN, OUTPUT);
@@ -529,6 +547,7 @@ void setup() {
   packetCount = backup.packets;
   currentTime = backup.time;
   calibrationAltitude = backup.calibrationAlt;
+  gpsCalibrationAltitude = backup.gpsCalibrationAlt;
 
   // Initialize toggle states
   MRA = ToggleOff;
@@ -560,39 +579,65 @@ void setup() {
   Serial1.begin(9600);
 
   // Initialize and verify  BMP
-  if (!bmp.begin_I2C(0x77, &Wire) && VERIFY_SENSORS) {
-    for (int i = 0; i < 10; i++) {
-      Serial.println("BMP ERROR");
-      delay(10);
+  if (!bmp.begin_I2C(0x77, &Wire)) {
+    if (VERIFY_SENSORS) {
+      for (int i = 0; i < 10; i++) {
+        Serial.println("BMP ERROR");
+        delay(10);
+      }
     }
+
+    bmpFault = SingleFault;
+    telemetry.faultMessage += "(BMP FAULT)";
+    
   }
   bmp.performReading();
 
-  delay(100);
-
   // Initialize and verify GPS
-  if (gps.begin(Wire) == false && VERIFY_SENSORS) //Connect to the Ublox module using Wire port
+  if (gps.begin(Wire) == false) //Connect to the Ublox module using Wire port
   {
-    for (int i = 0; i < 10; i++) {
-      Serial.println("GPS ERROR");
-      delay(10);
+    if (VERIFY_SENSORS) {
+      for (int i = 0; i < 10; i++) {
+        Serial.println("GPS ERROR");
+        delay(10);
+      }
     }
+
+    gpsFault = SingleFault;
+    telemetry.faultMessage += "(GPS FAULT)";
+    
   }
   gps.setI2COutput(COM_TYPE_UBX); // Disable extra NMEA sentences
   gps.setNavigationFrequency(10, 1); // Set fix rate to 10Hz, max 1 second timeout
   gps.saveConfiguration(); //Save the current settings to flash and BBR
 
   // Initialize and verify BNO
-  if (!bno.begin() && VERIFY_SENSORS)
+  if (!bno.begin())
   {
-    for (int i = 0; i < 10; i++) {
-      Serial.println("BNO ERROR");
-      delay(10);
+    if (VERIFY_SENSORS) {
+      for (int i = 0; i < 10; i++) {
+        Serial.println("BNO ERROR");
+        delay(10);
+      }
     }
+
+    bnoFault = SingleFault;
+    telemetry.faultMessage += "(BNO FAULT)";
   }
   bno.setExtCrystalUse(true);
 
-  transmit("BOOTED"); // Verify boot over umbilical
+  if (bmpFault == SingleFault) {
+    if (gpsFault == SingleFault) {
+      altitudeFault = DoubleFault;
+      telemetry.faultMessage += "(DOUBLE ALTITUDE FAULT)";
+      flightState = ABORT;
+      timeAbortEntered = millis();
+    } else {
+      altitudeFault = SingleFault;
+      
+      telemetry.faultMessage += "(SINGLE ALTITUDE FAULT)";
+    }
+  }
 
   // Create command handler
   commander = CommandHandler();
@@ -620,6 +665,8 @@ void setup() {
   digitalWrite(LED_MOS, LOW);
 };
 
+bool abortPreviouslySet = false;
+
 void loop() {
   // Update time between cycles
   currentCycleTime = millis();
@@ -635,19 +682,26 @@ void loop() {
     temperature = bmp.temperature;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
 
-    // If in simulation mode, use simulated pressure, otherwise use BMP
-    if (!simulation) {
-      altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
-      pressure = bmp.pressure;
-    } else {
-      altitude = pressureToAltitude(simulatedPressure);
-      pressure = simulatedPressure;
-    }
-
     // Poll GPS for position and altitude
     latitude = (float)gps.getLatitude() / 10000000;
     longitude = (float)gps.getLongitude() / 10000000;
     gpsAltitude = gps.getAltitude();
+
+    // If in simulation mode, use simulated pressure, otherwise use BMP
+    if (!simulation) {
+      if (altitudeFault == NoFault) {
+        altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
+        pressure = bmp.pressure;
+      } else if (altitudeFault == SingleFault) {
+        altitude = gpsAltitude - gpsCalibrationAltitude;
+      } else if (altitudeFault == DoubleFault && !abortPreviouslySet) {
+        flightState == ABORT;
+        abortPreviouslySet = true;
+      }
+    } else {
+      altitude = pressureToAltitude(simulatedPressure);
+      pressure = simulatedPressure;
+    }
 
     // Read our voltage over the ADC
     adcVol = analogRead(ADC_GPIO_PIN);
@@ -742,6 +796,15 @@ void loop() {
         // Beacons
         digitalWrite(BUZZER_MOS, HIGH);
         digitalWrite(LED_MOS, HIGH);
+        
+      } else if (flightState == ABORT) {
+        if (millis() - timeAbortEntered >= 250000) {
+          flightState = Landed;
+        }
+        
+        // Full slowdown
+        digitalWrite(RELEASE_MOS_PIN, HIGH);
+        ReleaseServo.write(RELEASE_FALL);
       }
     }
 
@@ -847,6 +910,8 @@ String assemblePacket(TelemetryPacket telemetry) {
     packet += "PARACHUTE";
   } else if (telemetry.flightState == Landed) {
     packet += "LANDED";
+  } else if (telemetry.flightState == ABORT) {
+    packet += "ABORT";
   }
   packet += ",";
 
@@ -906,6 +971,8 @@ String assemblePacket(TelemetryPacket telemetry) {
 
   packet += telemetry.cmdEcho;
   packet += ",,";
+
+  packet += telemetry.faultMessage;
 
   return packet;
 };
