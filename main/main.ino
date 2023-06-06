@@ -9,45 +9,8 @@ Libraries
 #include <math.h>
 #include <EEPROM.h>
 
-/*
-Custom data types
-*/
-
-// Holds flight state
-enum FlightState {
-  LowPower,
-  PreLaunch,
-  Launch,
-  Peak,
-  Deployment,
-  Parachute,
-  Landed
-};
-
-// Holds deployment states
-enum DeploymentState {
-  NotDeployed,
-  Deployed
-};
-
-// Holds toggle states
-enum OptionalToggleState {
-  ToggleOn,
-  ToggleOff
-};
-
-// Holds computer mode
-enum FlightMode {
-  Flight,
-  Simulation
-};
-
-// Holds time information
-struct TimeStruct {
-  int hours;
-  int minutes;
-  float seconds;
-};
+#include "timing.h"
+#include "enums.h"
 
 // Holds all information used in telemetry packets
 struct TelemetryPacket {
@@ -840,29 +803,6 @@ void loop() {
   lastCycleTime = currentCycleTime;
 };
 
-// Creates a string from a time structure
-String formatTime(TimeStruct tStruct) {
-  String out = "";
-  if (tStruct.hours < 10) {
-    out += "0";
-  }
-  out += String(tStruct.hours);
-  out += ":";
-
-  if (tStruct.minutes < 10) {
-    out += "0";
-  }
-  out += String(tStruct.minutes);
-  out += ":";
-
-  if (tStruct.seconds < 10) {
-    out += "0";
-  }
-  out += String(tStruct.seconds, 2);
-
-  return out;
-};
-
 // Pulses the beacon
 void pulseBeacon() {
   digitalWrite(BUZZER_MOS, HIGH);
@@ -993,33 +933,4 @@ const double T0 = 288.15;
 double pressureToAltitude(float p) {
   p *= 100;
   return T0 / lapse * (1 - pow(p / p0, R * lapse / (g * M)));
-}
-
-// Creates a fresh time structure without logical garbage
-TimeStruct createBlankTime() {
-  TimeStruct t;
-  t.hours = 0;
-  t.minutes = 0;
-  t.seconds = 0.0;
-  return t;
 };
-
-// Updates a time structure with a time delta
-void updateTime(TimeStruct &toUpdate, unsigned long timeDeltaMillis) {
-  float timeDeltaSeconds = (float)timeDeltaMillis / 1000.0;
-
-  toUpdate.seconds += timeDeltaSeconds;
-  if (toUpdate.seconds >= 60.0) {
-    toUpdate.seconds -= 60.0;
-    toUpdate.minutes += 1;
-  }
-
-  if (toUpdate.minutes >= 60) {
-    toUpdate.minutes -= 60;
-    toUpdate.hours += 1;
-  }
-
-  if (toUpdate.hours >= 24) {
-    toUpdate.hours -= 24;
-  }
-}
