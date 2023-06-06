@@ -30,6 +30,12 @@ enum DeploymentState {
   Deployed
 };
 
+// Holds toggle states
+enum OptionalToggleState {
+  ToggleOn,
+  ToggleOff
+};
+
 // Holds computer mode
 enum FlightMode {
   Flight,
@@ -67,6 +73,16 @@ struct TelemetryPacket {
   float tiltX;
   float tiltY;
   String cmdEcho;
+  OptionalToggleState MRA;
+  OptionalToggleState PRS;
+  OptionalToggleState URA;
+  OptionalToggleState FRA;
+  OptionalToggleState BCS;
+  OptionalToggleState CAM;
+  float orX;
+  float orY;
+  float orZ;
+  float gsZ;
 };
 
 // Holds information in case of power loss
@@ -81,18 +97,29 @@ BackupData backup;
 
 // Will help in transitioning to XBEE (and logging)
 void transmit(String toTransmit) {
+  // Prints to Serial  
   Serial.println(toTransmit);
+  // Prints to XBee
   Serial1.println(toTransmit);
+  // Prints to OpenLog
   Serial2.println(toTransmit);
 }
 
 // Flight-time variables
 FlightState flightState; // Holds the determinant for state change logic
+FlightMode computerMode; // Holds the determinant for sim change logic
 
 TelemetryPacket telemetry; // Holds telemetry packets
 
 TimeStruct currentTime; // Holds global time
 TimeStruct gpsTime; // Time as seen by GPS
+
+OptionalToggleState MRA;
+OptionalToggleState PRS;
+OptionalToggleState URA;
+OptionalToggleState FRA;
+OptionalToggleState BCS;
+OptionalToggleState CAM;
 
 float altitude; // Altitude of cansat
 float lastAltitude; // Altitude at last logic step
@@ -108,9 +135,15 @@ float gpsAltitude; // Altitude as measured by GPS (ASL)
 float latitude; // GPS read latitude
 float longitude; // GPS read longitude
 
-SFE_UBLOX_GPS gps; // gps
+float orX;
+float orY;
+float orZ;
+float gsZ;
 
-Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire1);
+SFE_UBLOX_GPS gps; // gps
+/// ADD GPS HERTZ SET
+
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
 
 Adafruit_BMP3XX bmp; // BMP388 Sensor for pressure/temperature
 #define SEALEVELPRESSURE_HPA 1000
@@ -134,19 +167,27 @@ float simulatedPressure; // Whats the simulated pressure?
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
 
-// Parachute servo M1
-Servo ParachuteServo;
-#define PARACHUTE_PWM_PIN 19
-#define PARACHUTE_MOS_PIN 22
-#define PARACHUTE_CLOSED 0
-#define PARACHUTE_OPEN 100
-
 // Release servo
 Servo ReleaseServo;
-#define RELEASE_PWM_PIN 20
-#define RELEASE_MOS_PIN 26
+#define RELEASE_PWM_PIN 15
+#define RELEASE_MOS_PIN 14
 #define RELEASE_CLOSED 0
-#define RELEASE_OPEN 40
+#define RELEASE_FALL 90
+#define RELEASE_PARACHUTE 150
+
+// Release servo
+Servo OrientationServo;
+#define ORIENT_PWM_PIN 11
+#define ORIENT_MOS_PIN 10
+
+// Release servo
+Servo FlagServo;
+#define FLAG_PWM_PIN 4
+#define FLAG_MOS_PIN 3
+
+// BCS
+#define BUZZER_MOS 19
+#define LED_MOS 20
 
 // Backup Location
 #define EEPROM_ADDR 0
@@ -226,6 +267,18 @@ class CommandHandler {
       SIM(arg);
     } else if (cmd == "SIMP") {
       SIMP(arg);
+    } else if (cmd == "MRA") {
+      MRA(arg);
+    } else if (cmd == "PRS") {
+      PRS(arg);
+    } else if (cmd == "URA") {
+      URA(arg);
+    } else if (cmd == "FRA") {
+      FRA(arg);
+    } else if (cmd == "BCS") {
+      BCS(arg);
+    } else if (cmd == "CAM") {
+      CAM(arg);
     }
 
     telemetry.cmdEcho = String(cmd);
@@ -299,18 +352,187 @@ class CommandHandler {
       simulatedPressure = arg.toFloat();
     }
   }
+
+  // Manual Release Activation
+  void MRA(String arg) {
+    if (arg == "ON") {
+      telemetry.MRA = ToggleOn;
+      telemetry.heatShieldState = Deployed;
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      ReleaseServo.write(RELEASE_FALL);
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      digitalWrite(BUZZER_MOS, HIGH);
+      digitalWrite(LED_MOS, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_MOS, LOW);
+      digitalWrite(LED_MOS, LOW);
+    } else if (arg == "OFF") {
+      telemetry.MRA = ToggleOff;
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      ReleaseServo.write(RELEASE_CLOSED);
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      digitalWrite(BUZZER_MOS, HIGH);
+      digitalWrite(LED_MOS, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_MOS, LOW);
+      digitalWrite(LED_MOS, LOW);
+    }
+  }
+
+  void PRS(String arg) {
+    if (arg == "ON") {
+      telemetry.PRS = ToggleOn;
+      telemetry.parachuteState = Deployed;
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      ReleaseServo.write(RELEASE_PARACHUTE);
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      digitalWrite(BUZZER_MOS, HIGH);
+      digitalWrite(LED_MOS, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_MOS, LOW);
+      digitalWrite(LED_MOS, LOW);
+    } else if (arg == "OFF") {
+      telemetry.PRS = ToggleOff;
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      ReleaseServo.write(RELEASE_CLOSED);
+      digitalWrite(RELEASE_MOS_PIN, HIGH);
+      digitalWrite(BUZZER_MOS, HIGH);
+      digitalWrite(LED_MOS, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_MOS, LOW);
+      digitalWrite(LED_MOS, LOW);
+    }
+  }
+
+  void URA(String arg) {
+    if (arg == "ON") {
+      telemetry.URA = ToggleOn;
+      // ADD ORIENTATION
+    }
+    if (arg == "OFF") {
+      telemetry.URA = ToggleOff;
+    }
+  }
+
+  void FRA(String arg) {
+    if (arg == "ON") {
+      telemetry.FRA = ToggleOn;
+      telemetry.mastState = Deployed;
+    }
+    if (arg == "OFF") {
+      telemetry.FRA = ToggleOff;
+      telemetry.mastState = NotDeployed;
+    }
+  }
+
+  void CAM(String arg) {
+    if (arg == "ON") {
+      telemetry.CAM = ToggleOn;
+    }
+    if (arg == "OFF") {
+      telemetry.CAM = ToggleOff;
+    }
+  }
+
+  void BCS(String arg) {
+    if (arg == "ON") {
+      telemetry.BCS = ToggleOn;
+      digitalWrite(BUZZER_MOS, HIGH);
+      digitalWrite(LED_MOS, HIGH);
+    }
+    if (arg == "OFF") {
+      telemetry.BCS = ToggleOff;
+      digitalWrite(BUZZER_MOS, LOW);
+      digitalWrite(LED_MOS, LOW);
+    }
+  }
+
 };
 
-class 
+class Uprighting {
+  public:
+  float pGsZ, cGsZ, GsDiff;
+  int sSpeed;
+
+  Uprighting() {
+    pGsZ = 0;
+    cGsZ = 0;
+    GsDiff = 0;
+    sSpeed = 100;
+  }
+
+  void sampleGs() {
+    pGsZ = cGsZ;
+    imu::Vector<3> grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
+    delay(50);
+    cGsZ = grav.z();
+    GsDiff = cGsZ - pGsZ;
+    Serial.print(cGsZ);
+    Serial.print(" ");
+    Serial.println(GsDiff);
+    delay(50);
+  }
+
+  void setUp() {
+    // Calibration
+    for (int i = 0; i < 20; i++) { sampleGs(); }
+    digitalWrite(3, HIGH);
+    OrientationServo.write(180);
+    delay(150);
+    digitalWrite(3, LOW);
+    sampleGs();
+    if (GsDiff > 0) {
+      sSpeed = 180;
+    }  
+    else {
+      sSpeed = 0;
+    }
+  }
+
+  void rotate() {
+    digitalWrite(ORIENT_MOS_PIN, HIGH);
+    OrientationServo.write(sSpeed);
+    delay(150);
+    digitalWrite(ORIENT_MOS_PIN, LOW);
+  }
+
+  void upright() {
+    while (cGsZ < 9.65) {
+      sampleGs();
+      rotate();
+    }
+    digitalWrite(BUZZER_MOS, HIGH);
+    digitalWrite(LED_MOS, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_MOS, LOW);
+    digitalWrite(LED_MOS, LOW);
+    delay(100);
+    digitalWrite(BUZZER_MOS, HIGH);
+    digitalWrite(LED_MOS, HIGH);
+    delay(500);
+    digitalWrite(BUZZER_MOS, LOW);
+    digitalWrite(LED_MOS, LOW);
+    delay(100);
+    digitalWrite(BUZZER_MOS, HIGH);
+    digitalWrite(LED_MOS, HIGH);
+    delay(100);
+    digitalWrite(BUZZER_MOS, LOW);
+    digitalWrite(LED_MOS, LOW);
+  }
+
+};
+
+// Commander for the orientation
+Uprighting uprighter; 
 
 // Commander for the flight computer
 CommandHandler commander;
 
 void setup() {
   Serial.begin(115200); // Open serial line TODO: Remove this in favor of xbee
-  Serial1.setTX(0);
-  Serial1.setRX(1);
-  Serial1.begin(9600); // Start Xbee Line
+  Serial2.setTX(8);
+  Serial2.setRX(9);
+  Serial2.begin(9600); // Start Xbee Line
 
   // Release Setup
   pinMode(RELEASE_MOS_PIN, OUTPUT);
@@ -318,11 +540,21 @@ void setup() {
   digitalWrite(RELEASE_MOS_PIN, LOW);
   ReleaseServo.write(RELEASE_CLOSED);
 
-  // Parachute Setup
-  ParachuteServo.attach(PARACHUTE_PWM_PIN, 420, 2400);
-  ParachuteServo.write(PARACHUTE_CLOSED);
-  pinMode(PARACHUTE_MOS_PIN, OUTPUT);
-  digitalWrite(PARACHUTE_MOS_PIN, LOW);
+  // Orient Servo Setup
+  pinMode(ORIENT_MOS_PIN, OUTPUT);
+  OrientationServo.attach(ORIENT_PWM_PIN, 420, 2400);
+  digitalWrite(ORIENT_MOS_PIN, LOW);
+
+  // Flag Servo Setup
+  pinMode(ORIENT_MOS_PIN, OUTPUT);
+  OrientationServo.attach(ORIENT_PWM_PIN, 420, 2400);
+  digitalWrite(ORIENT_MOS_PIN, LOW);
+
+  // BCS Setup
+  pinMode(BUZZER_MOS, OUTPUT);
+  digitalWrite(BUZZER_MOS, LOW);
+  pinMode(LED_MOS, OUTPUT);
+  digitalWrite(LED_MOS, LOW);
 
   // Power on to EEPROM
   EEPROM.begin(4096);
@@ -335,6 +567,13 @@ void setup() {
   packetCount = backup.packets;
   currentTime = backup.time;
   calibrationAltitude = backup.calibrationAlt;
+
+  MRA = ToggleOff;
+  PRS = ToggleOff;
+  URA = ToggleOff;
+  FRA = ToggleOff;
+  BCS = ToggleOff;
+  CAM = ToggleOff;
 
   altitude = 0.0;
   lastAltitude = 0.0;
@@ -349,17 +588,17 @@ void setup() {
 
 
   // Setup I2c
-  Wire1.setSDA(14);
-  Wire1.setSCL(15);
-  Wire1.begin();
+  Wire.setSDA(16);
+  Wire.setSCL(17);
+  Wire.begin();
 
   // Openlog Serial
-  Serial2.setTX(8);
-  Serial2.setRX(9);
-  Serial2.begin(9600);
+  Serial1.setTX(12);
+  Serial1.setRX(13);
+  Serial1.begin(9600);
 
   // Begin BMP
-  if (!bmp.begin_I2C(0x77, &Wire1) && VERIFY_SENSORS) {
+  if (!bmp.begin_I2C(0x77, &Wire) && VERIFY_SENSORS) {
     while (true) {
       Serial.println("BMP ERROR");
       delay(1000);
@@ -370,7 +609,7 @@ void setup() {
   delay(100);
 
   // Begin GPS
-  if (gps.begin(Wire1) == false && VERIFY_SENSORS) //Connect to the Ublox module using Wire port
+  if (gps.begin(Wire) == false && VERIFY_SENSORS) //Connect to the Ublox module using Wire port
   {
     while (true) {
       Serial.println("GPS ERROR");
@@ -388,15 +627,33 @@ void setup() {
       delay(1000);
     }
   }
+  bno.setExtCrystalUse(true);
 
   transmit("BOOTED");
 
   // Create command handler
   commander = CommandHandler();
+  // Sets up uprighter
+  uprighter = Uprighting();
 
-  // Buzzer pin
-  pinMode(17, OUTPUT);
-  pinMode(18, OUTPUT);
+  digitalWrite(BUZZER_MOS, HIGH);
+  digitalWrite(LED_MOS, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_MOS, LOW);
+  digitalWrite(LED_MOS, LOW);
+  delay(100);
+  digitalWrite(BUZZER_MOS, HIGH);
+  digitalWrite(LED_MOS, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_MOS, LOW);
+  digitalWrite(LED_MOS, LOW);
+  delay(100);
+  digitalWrite(BUZZER_MOS, HIGH);
+  digitalWrite(LED_MOS, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_MOS, LOW);
+  digitalWrite(LED_MOS, LOW);
+
 };
 
 void loop() {
@@ -451,8 +708,8 @@ void loop() {
     {
       if (flightState == LowPower) {
         // Do nothing, and don't do flight logic
-        digitalWrite(17, LOW);
-        digitalWrite(18, LOW);
+        digitalWrite(BUZZER_MOS, LOW);
+        digitalWrite(LED_MOS, LOW);
       } else if (flightState == PreLaunch) {
 
         // When 10m passed and velocity greater tha3n 10m/s, move to launch
@@ -462,10 +719,16 @@ void loop() {
           transmitting = true;
           // Move into launch state
           flightState = Launch;
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          delay(50);
+          digitalWrite(BUZZER_MOS, LOW);
+          digitalWrite(LED_MOS, LOW);
         }
 
         // Keep servos on
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+        digitalWrite(RELEASE_MOS_PIN, LOW);
+        ReleaseServo.write(RELEASE_CLOSED);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
 
       } else if (flightState == Launch) {
@@ -473,12 +736,15 @@ void loop() {
         // When above 550m, transition to this stage (present to avoid accidental movment directly into landing stage)
         if (altitude >= 550.0) {
           flightState = Peak;
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          delay(50);
+          digitalWrite(BUZZER_MOS, LOW);
+          digitalWrite(LED_MOS, LOW);
         }
 
         // Servos on and closed
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
         ReleaseServo.write(RELEASE_CLOSED);
 
       } else if (flightState == Peak) {
@@ -487,14 +753,18 @@ void loop() {
         if (altitude < 500.0) {
           // Update telemetry
           telemetry.heatShieldState = Deployed;
+          telemetry.MRA = ToggleOn;
           // Move to deploymment state
           flightState = Deployment;
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          delay(50);
+          digitalWrite(BUZZER_MOS, LOW);
+          digitalWrite(LED_MOS, LOW);
         }
 
         // Servos on and closed
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
         ReleaseServo.write(RELEASE_CLOSED);
 
       } else if (flightState == Deployment) {
@@ -503,18 +773,18 @@ void loop() {
         if (altitude < 200.0) {
           // Move to chute stage
           flightState = Parachute;
-
-          // Open chute early
+          telemetry.PRS = ToggleOn;
           telemetry.parachuteState = Deployed;
-          ParachuteServo.write(PARACHUTE_OPEN);
-          digitalWrite(PARACHUTE_MOS_PIN, HIGH);
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          delay(50);
+          digitalWrite(BUZZER_MOS, LOW);
+          digitalWrite(LED_MOS, LOW);
         }
 
         // Release servo open
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_CLOSED);
-        ReleaseServo.write(RELEASE_OPEN);
+        ReleaseServo.write(RELEASE_FALL);
 
       } else if (flightState == Parachute) {
 
@@ -522,20 +792,23 @@ void loop() {
         if (altitude < 10) {
           // Move to landed state
           flightState = Landed;
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          delay(50);
+          digitalWrite(BUZZER_MOS, LOW);
+          digitalWrite(LED_MOS, LOW);
 
           // Execute wacky subroutine (TODO)
         }
 
         // Chute servo open
-        digitalWrite(PARACHUTE_MOS_PIN, HIGH);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
-        ParachuteServo.write(PARACHUTE_OPEN);
-        ReleaseServo.write(RELEASE_OPEN);
+        ReleaseServo.write(RELEASE_PARACHUTE);
 
       } else if (flightState == Landed) {
         // Beacons
-        digitalWrite(17, HIGH);
-        digitalWrite(18, HIGH);
+        digitalWrite(BUZZER_MOS, HIGH);
+        digitalWrite(LED_MOS, HIGH);
       }
     }
 
