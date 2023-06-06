@@ -153,7 +153,7 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
-unsigned long deltaTimeGPS;
+
 
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
@@ -583,9 +583,6 @@ void setup() {
   pressure = 0;
 
   lastCycleTime = millis(); // Prime cycle execution
-  deltaTime = 0; // Immediatly start flight logic
-  deltaTimeGPS = 99999999999; // Get GPS time right away
-
 
   // Setup I2c
   Wire.setSDA(16);
@@ -662,7 +659,6 @@ void loop() {
   currentCycleTime = millis();
   cycleTimeGap = currentCycleTime - lastCycleTime;
   deltaTime += cycleTimeGap;
-  deltaTimeGPS += cycleTimeGap;
 
   // If one second has passed, perform flight logic
   if (deltaTime >= PACKET_GAP_TIME) {
