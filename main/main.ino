@@ -6,7 +6,7 @@ Libraries
 #include <Wire.h>
 #include <Servo.h>
 #include <Adafruit_BNO055.h>
-#include <Math.h>
+#include <math.h>
 #include <EEPROM.h>
 
 /*
@@ -152,8 +152,6 @@ unsigned long currentCycleTime; // Used for time update every cycle
 unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
-
-unsigned long deltaTimeGPS;
 
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
@@ -584,7 +582,6 @@ void setup() {
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
-  deltaTimeGPS = 99999999999; // Get GPS time right away
 
 
   // Setup I2c
@@ -617,6 +614,7 @@ void setup() {
     }
   }
   gps.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+  gps.setNavigationFrequency(10, 1);
   gps.saveConfiguration(); //Save the current settings to flash and BBR
 
   // Initialise bno
@@ -661,7 +659,6 @@ void loop() {
   currentCycleTime = millis();
   cycleTimeGap = currentCycleTime - lastCycleTime;
   deltaTime += cycleTimeGap;
-  deltaTimeGPS += cycleTimeGap;
 
   // If one second has passed, perform flight logic
   if (deltaTime >= PACKET_GAP_TIME) {
@@ -812,15 +809,9 @@ void loop() {
       }
     }
 
-    Serial.println("FLIGHT STATE CHANGES");
-
-    Serial.println("TIME GOTTEN");
-
     sensors_event_t orientationData;
 
     bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
-
-    Serial.println("ORIENTATION FETCHED");
 
     // Fill the fields of the telemetry packet
     telemetry.teamId = TEAM_ID;
@@ -836,6 +827,10 @@ void loop() {
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.pressure = pressure;
 
+    gpsTime.hours = gps.getHour();
+    gpsTime.minutes = gps.getMinute();
+    gpsTime.seconds = gps.getSecond();
+
     telemetry.gpsTime = gpsTime;
     telemetry.gpsAltitude = gpsAltitude;
     telemetry.latitude = latitude;
@@ -844,12 +839,8 @@ void loop() {
     telemetry.tiltX = 0;//orientationData.orientation.x;
     telemetry.tiltY = 0;//orientationData.orientation.y;
 
-    Serial.println("TELEMETRY FETCHED");
-
     // Assemble packet
     String packet = assemblePacket(telemetry);
-
-    Serial.println("TELEMETRY ASSEMBLED");
 
     // Convert to bytes
     // TODO: Convert all strings in here to bytes natively
@@ -861,8 +852,6 @@ void loop() {
 
       packetCount++;
     }
-
-    Serial.println("TRANSMITTED");
 
     // Update backups
     backup.packets = packetCount;
@@ -879,12 +868,6 @@ void loop() {
 
     // Update timing
     deltaTime = millis() - currentCycleTime;
-  }
-
-  if (deltaTimeGPS >= 60000) {
-    gpsTime.hours = gps.getHour();
-    gpsTime.minutes = gps.getMinute();
-    gpsTime.seconds = gps.getSecond();
   }
   
   lastCycleTime = currentCycleTime;
