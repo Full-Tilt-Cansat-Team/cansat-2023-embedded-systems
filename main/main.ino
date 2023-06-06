@@ -171,9 +171,9 @@ float simulatedPressure; // Whats the simulated pressure?
 Servo ReleaseServo;
 #define RELEASE_PWM_PIN 15
 #define RELEASE_MOS_PIN 14
-#define RELEASE_CLOSED 0
-#define RELEASE_FALL 90
-#define RELEASE_PARACHUTE 150
+#define RELEASE_CLOSED 155
+#define RELEASE_FALL 130
+#define RELEASE_PARACHUTE 0
 
 // Release servo
 Servo OrientationServo;
