@@ -153,11 +153,9 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
-
-
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
-bool simulationArmed = false;
+bool simulationArmed = false; // Required to enable simulation mode
 float simulatedPressure; // Whats the simulated pressure?
 
 // Definitions
@@ -167,7 +165,7 @@ float simulatedPressure; // Whats the simulated pressure?
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
 
-// Release servo
+// Release servo pins
 Servo ReleaseServo;
 #define RELEASE_PWM_PIN 15
 #define RELEASE_MOS_PIN 14
@@ -175,21 +173,21 @@ Servo ReleaseServo;
 #define RELEASE_FALL 130
 #define RELEASE_PARACHUTE 0
 
-// Release servo
+// Orientation servo pins
 Servo OrientationServo;
 #define ORIENT_PWM_PIN 11
 #define ORIENT_MOS_PIN 10
 
-// Release servo
+// Flag servo pins
 Servo FlagServo;
 #define FLAG_PWM_PIN 4
 #define FLAG_MOS_PIN 3
 
-// BCS
+// Beacon pins
 #define BUZZER_MOS 19
 #define LED_MOS 20
 
-// Backup Location
+// Backup Memory location
 #define EEPROM_ADDR 0
 
 // Debug flags
@@ -529,12 +527,13 @@ Uprighting uprighter;
 CommandHandler commander;
 
 void setup() {
-  Serial.begin(115200); // Open serial line TODO: Remove this in favor of xbee
+  Serial.begin(115200); // Open serial line to computer for umbilical
+
   Serial2.setTX(8);
   Serial2.setRX(9);
-  Serial2.begin(9600); // Start Xbee Line
+  Serial2.begin(9600); // Start Xbee Line for uplink
 
-  // Release Setup
+  // Release Servo Setup
   pinMode(RELEASE_MOS_PIN, OUTPUT);
   ReleaseServo.attach(RELEASE_PWM_PIN, 420, 2400);
   digitalWrite(RELEASE_MOS_PIN, LOW);
@@ -550,24 +549,25 @@ void setup() {
   OrientationServo.attach(ORIENT_PWM_PIN, 420, 2400);
   digitalWrite(ORIENT_MOS_PIN, LOW);
 
-  // BCS Setup
+  // Beacon setup
   pinMode(BUZZER_MOS, OUTPUT);
   digitalWrite(BUZZER_MOS, LOW);
   pinMode(LED_MOS, OUTPUT);
   digitalWrite(LED_MOS, LOW);
 
-  // Power on to EEPROM
+  // Initialize flash EEPROM block
   EEPROM.begin(4096);
 
-  // Load EEPROM backups
+  // Load EEPROM data backup
   EEPROM.get(EEPROM_ADDR, backup);
 
-  // Place into logic spots
+  // Loack backup states into runtime
   flightState = backup.state;
   packetCount = backup.packets;
   currentTime = backup.time;
   calibrationAltitude = backup.calibrationAlt;
 
+  // Initialize toggle states
   MRA = ToggleOff;
   PRS = ToggleOff;
   URA = ToggleOff;
@@ -575,10 +575,12 @@ void setup() {
   BCS = ToggleOff;
   CAM = ToggleOff;
 
+  // Initialize altitude and velocity
   altitude = 0.0;
   lastAltitude = 0.0;
   vertVelocity = 0.0;
 
+  // Initialize temperature and pressure
   temperature = 0;
   pressure = 0;
 
@@ -589,51 +591,53 @@ void setup() {
   Wire.setSCL(17);
   Wire.begin();
 
-  // Openlog Serial
+  // Open serial line for datalogging
   Serial1.setTX(12);
   Serial1.setRX(13);
   Serial1.begin(9600);
 
-  // Begin BMP
+  // Initialize and verify  BMP
   if (!bmp.begin_I2C(0x77, &Wire) && VERIFY_SENSORS) {
-    while (true) {
+    for (int i = 0; i < 10; i++) {
       Serial.println("BMP ERROR");
-      delay(1000);
+      delay(10);
     }
   }
   bmp.performReading();
 
   delay(100);
 
-  // Begin GPS
+  // Initialize and verify GPS
   if (gps.begin(Wire) == false && VERIFY_SENSORS) //Connect to the Ublox module using Wire port
   {
-    while (true) {
+    for (int i = 0; i < 10; i++) {
       Serial.println("GPS ERROR");
-      delay(1000);
+      delay(10);
     }
   }
-  gps.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
-  gps.setNavigationFrequency(10, 1);
+  gps.setI2COutput(COM_TYPE_UBX); // Disable extra NMEA sentences
+  gps.setNavigationFrequency(10, 1); // Set fix rate to 10Hz, max 1 second timeout
   gps.saveConfiguration(); //Save the current settings to flash and BBR
 
-  // Initialise bno
+  // Initialize and verify BNO
   if (!bno.begin() && VERIFY_SENSORS)
   {
-    while (true) {
-      Serial.println("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
-      delay(1000);
+    for (int i = 0; i < 10; i++) {
+      Serial.println("BNO ERROR");
+      delay(10);
     }
   }
   bno.setExtCrystalUse(true);
 
-  transmit("BOOTED");
+  transmit("BOOTED"); // Verify boot over umbilical
 
   // Create command handler
   commander = CommandHandler();
-  // Sets up uprighter
+
+  // Create uprighter
   uprighter = Uprighting();
 
+  // Fire beacon to indicate end of boot
   digitalWrite(BUZZER_MOS, HIGH);
   digitalWrite(LED_MOS, HIGH);
   delay(100);
@@ -651,25 +655,24 @@ void setup() {
   delay(100);
   digitalWrite(BUZZER_MOS, LOW);
   digitalWrite(LED_MOS, LOW);
-
 };
 
 void loop() {
-  // Update our timeing control
+  // Update time between cycles
   currentCycleTime = millis();
   cycleTimeGap = currentCycleTime - lastCycleTime;
   deltaTime += cycleTimeGap;
 
-  // If one second has passed, perform flight logic
+  // If enough time has passed, execute logic
   if (deltaTime >= PACKET_GAP_TIME) {
-    // Calculate current time
-    updateTime(currentTime, deltaTime);
+    updateTime(currentTime, deltaTime); // Calculate time for telemetry
 
     // Read pressure and temperature from BMP
     bmp.performReading();
     temperature = bmp.temperature;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
 
+    // If in simulation mode, use simulated pressure, otherwise use BMP
     if (!simulation) {
       altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
       pressure = bmp.pressure;
@@ -678,16 +681,17 @@ void loop() {
       pressure = simulatedPressure;
     }
 
-    // Read GPS values
+    // Poll GPS for position and altitude
     latitude = (float)gps.getLatitude() / 10000000;
     longitude = (float)gps.getLongitude() / 10000000;
     gpsAltitude = gps.getAltitude();
 
-    // Analog read
+    // Read our voltage over the ADC
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
 
+    // Poll serial chip for any new command data
     commander.addToBuffer();
     
     // Flight state changes
@@ -705,14 +709,12 @@ void loop() {
           transmitting = true;
           // Move into launch state
           flightState = Launch;
-          digitalWrite(BUZZER_MOS, HIGH);
-          digitalWrite(LED_MOS, HIGH);
-          delay(50);
-          digitalWrite(BUZZER_MOS, LOW);
-          digitalWrite(LED_MOS, LOW);
+
+          // Pulse beacon
+          pulseBeacon();
         }
 
-        // Keep servos on
+        // Lock servos to closed
         digitalWrite(RELEASE_MOS_PIN, LOW);
         ReleaseServo.write(RELEASE_CLOSED);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
@@ -722,11 +724,7 @@ void loop() {
         // When above 550m, transition to this stage (present to avoid accidental movment directly into landing stage)
         if (altitude >= 550.0) {
           flightState = Peak;
-          digitalWrite(BUZZER_MOS, HIGH);
-          digitalWrite(LED_MOS, HIGH);
-          delay(50);
-          digitalWrite(BUZZER_MOS, LOW);
-          digitalWrite(LED_MOS, LOW);
+          pulseBeacon();
         }
 
         // Servos on and closed
@@ -742,11 +740,7 @@ void loop() {
           telemetry.MRA = ToggleOn;
           // Move to deploymment state
           flightState = Deployment;
-          digitalWrite(BUZZER_MOS, HIGH);
-          digitalWrite(LED_MOS, HIGH);
-          delay(50);
-          digitalWrite(BUZZER_MOS, LOW);
-          digitalWrite(LED_MOS, LOW);
+          pulseBeacon();
         }
 
         // Servos on and closed
@@ -761,11 +755,7 @@ void loop() {
           flightState = Parachute;
           telemetry.PRS = ToggleOn;
           telemetry.parachuteState = Deployed;
-          digitalWrite(BUZZER_MOS, HIGH);
-          digitalWrite(LED_MOS, HIGH);
-          delay(50);
-          digitalWrite(BUZZER_MOS, LOW);
-          digitalWrite(LED_MOS, LOW);
+          pulseBeacon();
         }
 
         // Release servo open
@@ -778,13 +768,7 @@ void loop() {
         if (altitude < 10) {
           // Move to landed state
           flightState = Landed;
-          digitalWrite(BUZZER_MOS, HIGH);
-          digitalWrite(LED_MOS, HIGH);
-          delay(50);
-          digitalWrite(BUZZER_MOS, LOW);
-          digitalWrite(LED_MOS, LOW);
-
-          // Execute wacky subroutine (TODO)
+          pulseBeacon();
         }
 
         // Chute servo open
@@ -798,11 +782,13 @@ void loop() {
       }
     }
 
+    // Get orientation data from the BNO if not in low power
     sensors_event_t orientationData;
+    if (flightState != LowPower) {
+      bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+    }
 
-    bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
-
-    // Fill the fields of the telemetry packet
+    // Fill the fields of the telemetry packet with sensor data
     telemetry.teamId = TEAM_ID;
     telemetry.missionTime = currentTime;
     telemetry.packetCount = packetCount;
@@ -810,26 +796,27 @@ void loop() {
     telemetry.flightState = flightState;
     telemetry.altitude = altitude;
     telemetry.temperature = temperature;
-    telemetry.voltage = voltage; // TODO: Impliment voltage sensing
+    telemetry.voltage = voltage;
     telemetry.pressure = pressure;
 
+    // Get time from GPS
     gpsTime.hours = gps.getHour();
     gpsTime.minutes = gps.getMinute();
     gpsTime.seconds = gps.getSecond();
 
+    // Fill the fields of the telemetry packet with GPS data
     telemetry.gpsTime = gpsTime;
     telemetry.gpsAltitude = gpsAltitude;
     telemetry.latitude = latitude;
     telemetry.longitude = longitude;
     telemetry.satConnections = gps.getSIV();
-    telemetry.tiltX = 0;//orientationData.orientation.x;
-    telemetry.tiltY = 0;//orientationData.orientation.y;
+    telemetry.tiltX = orientationData.orientation.x;
+    telemetry.tiltY = orientationData.orientation.y;
 
     // Assemble packet
     String packet = assemblePacket(telemetry);
 
-    // Convert to bytes
-    // TODO: Convert all strings in here to bytes natively
+    // Convert to bytes and transmit
     uint8_t packetBytes[packet.length()];
     packet.getBytes(packetBytes, packet.length());
 
@@ -839,14 +826,14 @@ void loop() {
       packetCount++;
     }
 
-    // Update backups
+    // Update and commit EEPROM flash block
     backup.packets = packetCount;
     backup.time = currentTime;
     backup.state = flightState;
     EEPROM.put(EEPROM_ADDR, backup);
     EEPROM.commit();
 
-    // Update timing
+    // Update last packet time
     deltaTime = millis() - currentCycleTime;
   }
   
@@ -875,6 +862,15 @@ String formatTime(TimeStruct tStruct) {
 
   return out;
 };
+
+// Pulses the beacon
+void pulseBeacon() {
+  digitalWrite(BUZZER_MOS, HIGH);
+  digitalWrite(LED_MOS, HIGH);
+  delay(50);
+  digitalWrite(BUZZER_MOS, LOW);
+  digitalWrite(LED_MOS, LOW);
+}
 
 // Function to assemble a telemetry packet
 String assemblePacket(TelemetryPacket telemetry) {
@@ -993,6 +989,7 @@ const double g = 9.80665;
 // The standard temperature at sea level in K
 const double T0 = 288.15;
 
+// Converts pressure to altitude, for use in simulation
 double pressureToAltitude(float p) {
   p *= 100;
   return T0 / lapse * (1 - pow(p / p0, R * lapse / (g * M)));
@@ -1007,7 +1004,7 @@ TimeStruct createBlankTime() {
   return t;
 };
 
-// Keeps track of time using millis() updates
+// Updates a time structure with a time delta
 void updateTime(TimeStruct &toUpdate, unsigned long timeDeltaMillis) {
   float timeDeltaSeconds = (float)timeDeltaMillis / 1000.0;
 
