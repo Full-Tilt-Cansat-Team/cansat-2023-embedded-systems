@@ -153,13 +153,15 @@ unsigned long lastCycleTime; // Used to calculate cycleTimeGap
 unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 
+unsigned long deltaTimeGPS;
+
 bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
 bool simulationArmed = false;
 float simulatedPressure; // Whats the simulated pressure?
 
 // Definitions
-#define PACKET_GAP_TIME 900
+#define PACKET_GAP_TIME 995
 #define TEAM_ID 1073
 
 // ADC pin for voltage
@@ -582,6 +584,7 @@ void setup() {
 
   lastCycleTime = millis(); // Prime cycle execution
   deltaTime = 0; // Immediatly start flight logic
+  deltaTimeGPS = 99999999999; // Get GPS time right away
 
 
   // Setup I2c
@@ -659,21 +662,17 @@ void loop() {
   currentCycleTime = millis();
   cycleTimeGap = currentCycleTime - lastCycleTime;
   deltaTime += cycleTimeGap;
+  deltaTimeGPS += cycleTimeGap;
 
   // If one second has passed, perform flight logic
   if (deltaTime >= PACKET_GAP_TIME) {
     // Calculate current time
     updateTime(currentTime, deltaTime);
-    updateTime(gpsTime, deltaTime);
-
-    Serial.println("Time updated");
 
     // Read pressure and temperature from BMP
     bmp.performReading();
     temperature = bmp.temperature;
     vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
-
-    Serial.println("BMP READ");
 
     if (!simulation) {
       altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA) - calibrationAltitude;
@@ -683,21 +682,15 @@ void loop() {
       pressure = simulatedPressure;
     }
 
-    Serial.println("Altitude gotten");
-
     // Read GPS values
     latitude = (float)gps.getLatitude() / 10000000;
     longitude = (float)gps.getLongitude() / 10000000;
     gpsAltitude = gps.getAltitude();
 
-    Serial.println("GPS GOT");
-
     // Analog read
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
-
-    Serial.println("VOLTAGE READ");
 
     commander.addToBuffer();
     
@@ -820,9 +813,6 @@ void loop() {
     telemetry.computerMode = Flight;
     telemetry.flightState = flightState;
     telemetry.altitude = altitude;
-    telemetry.heatShieldState = NotDeployed;
-    telemetry.parachuteState = NotDeployed;
-    telemetry.mastState = NotDeployed;
     telemetry.temperature = temperature;
     telemetry.voltage = voltage; // TODO: Impliment voltage sensing
     telemetry.pressure = pressure;
@@ -859,12 +849,6 @@ void loop() {
     backup.state = flightState;
     EEPROM.put(EEPROM_ADDR, backup);
     EEPROM.commit();
-
-    Serial.println("UPDATED");
-    Serial.println(deltaTime);
-
-    Serial.println("");
-    Serial.println("");
 
     // Update timing
     deltaTime = millis() - currentCycleTime;
@@ -937,7 +921,7 @@ String assemblePacket(TelemetryPacket telemetry) {
   packet += String(telemetry.altitude, 1);
   packet += ",";
 
-  if (telemetry.probeState == Deployed) {
+  if (telemetry.heatShieldState == Deployed) {
     packet += "P";
   } else {
     packet += "N";
