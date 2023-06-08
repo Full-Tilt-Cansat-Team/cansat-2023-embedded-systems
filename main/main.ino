@@ -27,9 +27,9 @@ Libraries
 Servo ReleaseServo;
 #define RELEASE_PWM_PIN 15
 #define RELEASE_MOS_PIN 14
-#define RELEASE_CLOSED 155
-#define RELEASE_FALL 130
-#define RELEASE_PARACHUTE 0
+#define RELEASE_CLOSED 135 //135
+#define RELEASE_FALL 85 //85
+#define RELEASE_PARACHUTE 0 //0
 
 // Orientation servo pins
 Servo OrientationServo;
@@ -42,8 +42,8 @@ Servo FlagServo;
 #define FLAG_MOS_PIN 3
 
 // Beacon pins
-#define BUZZER_MOS 19
-#define LED_MOS 20
+#define BUZZER_MOS 20 //19
+#define LED_MOS LED_BUILTIN//20
 
 // Backup Memory location
 #define EEPROM_ADDR 0
@@ -174,8 +174,8 @@ class CommandHandler {
   }
 
   void addToBuffer() {
-    while (Serial1.available() > 0) {
-      char c = (char)Serial1.read();
+    while (Serial2.available() > 0) {
+      char c = (char)Serial2.read();
       Serial.print(c);
     if (c == ';') {
         Serial.print("\n");
@@ -420,84 +420,63 @@ class CommandHandler {
 
 };
 
-class Uprighting {
+class UprightingSystem {
+  private:
+    float speed;
+    float last_reading;
+    int direction;
   public:
-  float pGsZ, cGsZ, GsDiff;
-  int sSpeed;
-
-  Uprighting() {
-    pGsZ = 0;
-    cGsZ = 0;
-    GsDiff = 0;
-    sSpeed = 100;
-  }
-
-  void sampleGs() {
-    pGsZ = cGsZ;
-    imu::Vector<3> grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
-    delay(50);
-    cGsZ = grav.z();
-    GsDiff = cGsZ - pGsZ;
-    Serial.print(cGsZ);
-    Serial.print(" ");
-    Serial.println(GsDiff);
-    delay(50);
-  }
-
-  void setUp() {
-    // Calibration
-    for (int i = 0; i < 20; i++) { sampleGs(); }
-    digitalWrite(3, HIGH);
-    OrientationServo.write(180);
-    delay(150);
-    digitalWrite(3, LOW);
-    sampleGs();
-    if (GsDiff > 0) {
-      sSpeed = 180;
-    }  
-    else {
-      sSpeed = 0;
+    UprightingSystem(float initial_speed) {
+        speed = initial_speed;
+        direction = 1;
+        last_reading = 0;
     }
-  }
 
-  void rotate() {
-    digitalWrite(ORIENT_MOS_PIN, HIGH);
-    OrientationServo.write(sSpeed);
-    delay(150);
-    digitalWrite(ORIENT_MOS_PIN, LOW);
-  }
-
-  void upright() {
-    while (cGsZ < 9.65) {
-      sampleGs();
-      rotate();
+    float control(float current_reading) {
+      if (current_reading < last_reading) {
+          direction *= -1;
+          speed *= 0.5;
+      }
+      
+      last_reading = current_reading;
+        
+      return (80 * speed * direction + 93);
     }
-    digitalWrite(BUZZER_MOS, HIGH);
-    digitalWrite(LED_MOS, HIGH);
-    delay(100);
-    digitalWrite(BUZZER_MOS, LOW);
-    digitalWrite(LED_MOS, LOW);
-    delay(100);
-    digitalWrite(BUZZER_MOS, HIGH);
-    digitalWrite(LED_MOS, HIGH);
-    delay(500);
-    digitalWrite(BUZZER_MOS, LOW);
-    digitalWrite(LED_MOS, LOW);
-    delay(100);
-    digitalWrite(BUZZER_MOS, HIGH);
-    digitalWrite(LED_MOS, HIGH);
-    delay(100);
-    digitalWrite(BUZZER_MOS, LOW);
-    digitalWrite(LED_MOS, LOW);
-  }
 
+    void loopControl() {
+      float a, b;
+      digitalWrite(ORIENT_MOS_PIN, HIGH);
+      while (true) {
+        imu::Vector<3> grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
+        b = grav.z();
+        a = control(b);
+        OrientationServo.write(a);
+
+        delay(100);
+        
+        OrientationServo.write(100);
+
+        delay(100);
+        
+        Serial.println(b);
+        Serial.println(a);
+        Serial.println("");
+        delay(1000);
+        if (speed <= 0.1) {
+          digitalWrite(FLAG_MOS_PIN, HIGH);
+          FlagServo.write(180);
+          delay(5000);
+          digitalWrite(FLAG_MOS_PIN, LOW);
+          break;
+        }
+      }
+    }
 };
-
-// Commander for the orientation
-Uprighting uprighter; 
 
 // Commander for the flight computer
 CommandHandler commander;
+
+UprightingSystem us = UprightingSystem(1);
 
 // Fault trackers
 FaultDetected bnoFault = NoFault;
@@ -516,7 +495,7 @@ void setup() {
 
   // Release Servo Setup
   pinMode(RELEASE_MOS_PIN, OUTPUT);
-  ReleaseServo.attach(RELEASE_PWM_PIN, 420, 2400);
+  ReleaseServo.attach(RELEASE_PWM_PIN);
   digitalWrite(RELEASE_MOS_PIN, LOW);
   ReleaseServo.write(RELEASE_CLOSED);
 
@@ -526,15 +505,18 @@ void setup() {
   digitalWrite(ORIENT_MOS_PIN, LOW);
 
   // Flag Servo Setup
-  pinMode(ORIENT_MOS_PIN, OUTPUT);
-  OrientationServo.attach(ORIENT_PWM_PIN, 420, 2400);
-  digitalWrite(ORIENT_MOS_PIN, LOW);
+  pinMode(FLAG_MOS_PIN, OUTPUT);
+  FlagServo.attach(FLAG_PWM_PIN, 420, 2400);
+  digitalWrite(FLAG_MOS_PIN, LOW);
 
   // Beacon setup
   pinMode(BUZZER_MOS, OUTPUT);
   digitalWrite(BUZZER_MOS, LOW);
   pinMode(LED_MOS, OUTPUT);
   digitalWrite(LED_MOS, LOW);
+
+  pinMode(20, OUTPUT);
+  pinMode(20, HIGH);
 
   // Initialize flash EEPROM block
   EEPROM.begin(4096);
@@ -642,9 +624,6 @@ void setup() {
   // Create command handler
   commander = CommandHandler();
 
-  // Create uprighter
-  uprighter = Uprighting();
-
   // Fire beacon to indicate end of boot
   digitalWrite(BUZZER_MOS, HIGH);
   digitalWrite(LED_MOS, HIGH);
@@ -718,6 +697,9 @@ void loop() {
         digitalWrite(BUZZER_MOS, LOW);
         digitalWrite(LED_MOS, LOW);
       } else if (flightState == PreLaunch) {
+        
+        digitalWrite(BUZZER_MOS, LOW);
+        digitalWrite(LED_MOS, LOW);
 
         // When 10m passed and velocity greater tha3n 10m/s, move to launch
         if (altitude >= 10.0 && vertVelocity >= 0.0) {
@@ -785,7 +767,10 @@ void loop() {
         if (altitude < 10) {
           // Move to landed state
           flightState = Landed;
+          digitalWrite(RELEASE_MOS_PIN, HIGH);
+          ReleaseServo.write(RELEASE_PARACHUTE);
           pulseBeacon();
+          us.loopControl();
         }
 
         // Chute servo open
@@ -848,6 +833,8 @@ void loop() {
 
     if (transmitting) {
       transmit(packet);
+
+      Serial.println(vertVelocity);
 
       packetCount++;
     }
