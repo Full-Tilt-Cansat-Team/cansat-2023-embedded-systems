@@ -23,6 +23,9 @@ Libraries
 // ADC pin for voltage
 #define ADC_GPIO_PIN 27
 
+// Camera Pin
+#define CAM_TOGGLE_PIN 18
+
 // Release servo pins
 Servo ReleaseServo;
 #define RELEASE_PWM_PIN 15
@@ -42,8 +45,8 @@ Servo FlagServo;
 #define FLAG_MOS_PIN 3
 
 // Beacon pins
-#define BUZZER_MOS 20 //19
-#define LED_MOS LED_BUILTIN//20
+#define BUZZER_MOS 19
+#define LED_MOS 20
 
 // Backup Memory location
 #define EEPROM_ADDR 0
@@ -156,12 +159,76 @@ unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 unsigned long timeAbortEntered; // When the abort stage was entered
 
-bool transmitting = true; // Are we transmitting packets?
+bool transmitting = false; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
 bool simulationArmed = false; // Required to enable simulation mode
 float simulatedPressure; // Whats the simulated pressure?
 
 int packetCount;
+int secondsBelowTwoMS;
+
+int statusLEDState = 1;
+
+class UprightingSystem {
+  public:
+    float speed;
+    float last_reading;
+    int direction;
+    UprightingSystem(float initial_speed) {
+        speed = initial_speed;
+        direction = 1;
+        last_reading = 0;
+    }
+
+    float control(float current_reading) {
+      if (current_reading < last_reading) {
+          direction *= -1;
+          speed *= 0.5;
+      }
+      
+      last_reading = current_reading;
+        
+      return (80 * speed * direction + 100);
+    }
+
+    void loopControl() {
+      float a, b;
+      digitalWrite(ORIENT_MOS_PIN, HIGH);
+      while (true) {
+
+        imu::Vector<3> grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
+        b = 0;
+        b = grav.z();
+        
+        a = control(b);
+        OrientationServo.write(a);
+
+        delay(100);
+        
+        OrientationServo.write(100);
+
+        delay(200);
+
+        grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
+        b = 0;
+        b = grav.z();
+
+        Serial.println(b);
+        Serial.println(a);
+        Serial.println("");
+        delay(1000);
+        
+        if ((b >= 8.74 && b <= 9.8)) {
+          digitalWrite(FLAG_MOS_PIN, HIGH);
+          FlagServo.write(180);
+          delay(5000);
+          digitalWrite(FLAG_MOS_PIN, LOW);
+          telemetry.mastState = Deployed;
+          break;
+        }
+      }
+    }
+};
 
 class CommandHandler {
   public:
@@ -173,13 +240,13 @@ class CommandHandler {
     buffer = "";
   }
 
-  void addToBuffer() {
+  void addToBuffer(UprightingSystem &u) {
     while (Serial2.available() > 0) {
       char c = (char)Serial2.read();
       Serial.print(c);
     if (c == ';') {
         Serial.print("\n");
-        detectCommand(buffer);
+        detectCommand(buffer, u);
         buffer = "";
       } else {
         buffer += (char)c;
@@ -191,7 +258,7 @@ class CommandHandler {
       Serial.print(c);
     if (c == ';') {
         Serial.print("\n");
-        detectCommand(buffer);
+        detectCommand(buffer, u);
         buffer = "";
       } else {
         buffer += (char)c;
@@ -199,7 +266,7 @@ class CommandHandler {
     }
   }
 
-  void detectCommand(String buffer) {
+  void detectCommand(String buffer, UprightingSystem &u) {
     // find the locations of the commas
     int first_comma = buffer.indexOf(',');
     int second_comma = buffer.indexOf(',', first_comma + 1);
@@ -245,6 +312,8 @@ class CommandHandler {
       BCS(arg);
     } else if (cmd == "CAM") {
       CAM(arg);
+    } else if (cmd == "RPL") {
+      RPL(arg, u);
     }
 
     telemetry.cmdEcho = String(cmd);
@@ -403,6 +472,9 @@ class CommandHandler {
     if (arg == "OFF") {
       telemetry.CAM = ToggleOff;
     }
+    digitalWrite(CAM_TOGGLE_PIN, LOW);
+    delay(900);
+    digitalWrite(CAM_TOGGLE_PIN, HIGH);
   }
 
   void BCS(String arg) {
@@ -418,59 +490,16 @@ class CommandHandler {
     }
   }
 
-};
+  void RPL(String arg, UprightingSystem &u) {
+    u.speed = 1;
+    
+    digitalWrite(FLAG_MOS_PIN, HIGH);
+    FlagServo.write(0);
+    delay(5000);
 
-class UprightingSystem {
-  private:
-    float speed;
-    float last_reading;
-    int direction;
-  public:
-    UprightingSystem(float initial_speed) {
-        speed = initial_speed;
-        direction = 1;
-        last_reading = 0;
-    }
+    u.loopControl();
+  }
 
-    float control(float current_reading) {
-      if (current_reading < last_reading) {
-          direction *= -1;
-          speed *= 0.5;
-      }
-      
-      last_reading = current_reading;
-        
-      return (80 * speed * direction + 93);
-    }
-
-    void loopControl() {
-      float a, b;
-      digitalWrite(ORIENT_MOS_PIN, HIGH);
-      while (true) {
-        imu::Vector<3> grav = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
-        b = grav.z();
-        a = control(b);
-        OrientationServo.write(a);
-
-        delay(100);
-        
-        OrientationServo.write(100);
-
-        delay(100);
-        
-        Serial.println(b);
-        Serial.println(a);
-        Serial.println("");
-        delay(1000);
-        if (speed <= 0.1) {
-          digitalWrite(FLAG_MOS_PIN, HIGH);
-          FlagServo.write(180);
-          delay(5000);
-          digitalWrite(FLAG_MOS_PIN, LOW);
-          break;
-        }
-      }
-    }
 };
 
 // Commander for the flight computer
@@ -492,6 +521,10 @@ void setup() {
   Serial2.begin(9600); // Start Xbee Line for uplink
 
   telemetry.faultMessage = ""; // No message for the moment
+
+  // Camera Setup
+  pinMode(CAM_TOGGLE_PIN, OUTPUT);
+  digitalWrite(CAM_TOGGLE_PIN, HIGH);
 
   // Release Servo Setup
   pinMode(RELEASE_MOS_PIN, OUTPUT);
@@ -559,6 +592,8 @@ void setup() {
   Serial1.setTX(12);
   Serial1.setRX(13);
   Serial1.begin(9600);
+
+  delay(100);
 
   // Initialize and verify  BMP
   if (!bmp.begin_I2C(0x77, &Wire)) {
@@ -659,12 +694,14 @@ void loop() {
     // Read pressure and temperature from BMP
     bmp.performReading();
     temperature = bmp.temperature;
-    vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
 
     // Poll GPS for position and altitude
     latitude = (float)gps.getLatitude() / 10000000;
     longitude = (float)gps.getLongitude() / 10000000;
     gpsAltitude = gps.getAltitude();
+
+    vertVelocity = (altitude - lastAltitude) / ((float)deltaTime / 1000.0); // calculate velocity
+    lastAltitude = altitude;
 
     // If in simulation mode, use simulated pressure, otherwise use BMP
     if (!simulation) {
@@ -682,13 +719,27 @@ void loop() {
       pressure = simulatedPressure;
     }
 
+    if (abs(vertVelocity) <= 2) {
+      secondsBelowTwoMS++;
+    } else {
+      secondsBelowTwoMS = 0;
+    }
+
     // Read our voltage over the ADC
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
     voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
 
     // Poll serial chip for any new command data
-    commander.addToBuffer();
+    commander.addToBuffer(us);
+
+    if (statusLEDState == 1) {
+      digitalWrite(LED_BUILTIN, HIGH);
+    } else {
+      digitalWrite(LED_BUILTIN, LOW);
+    }
+
+    statusLEDState = 1 - statusLEDState;
     
     // Flight state changes
     {
@@ -696,6 +747,7 @@ void loop() {
         // Do nothing, and don't do flight logic
         digitalWrite(BUZZER_MOS, LOW);
         digitalWrite(LED_MOS, LOW);
+        digitalWrite(RELEASE_MOS_PIN, LOW);
       } else if (flightState == PreLaunch) {
         
         digitalWrite(BUZZER_MOS, LOW);
@@ -709,12 +761,19 @@ void loop() {
           // Move into launch state
           flightState = Launch;
 
+          if (CAM == ToggleOff) {
+            CAM = ToggleOn;
+            digitalWrite(CAM_TOGGLE_PIN, LOW);
+            delay(900);
+            digitalWrite(CAM_TOGGLE_PIN, HIGH);
+          }
+
           // Pulse beacon
           pulseBeacon();
         }
 
         // Lock servos to closed
-        digitalWrite(RELEASE_MOS_PIN, LOW);
+        
         ReleaseServo.write(RELEASE_CLOSED);
         digitalWrite(RELEASE_MOS_PIN, HIGH);
 
@@ -764,12 +823,22 @@ void loop() {
       } else if (flightState == Parachute) {
 
         // Just wait until velocity is less than 2
-        if (altitude < 10) {
+        if (altitude < 10 && secondsBelowTwoMS > 4) {
           // Move to landed state
           flightState = Landed;
           digitalWrite(RELEASE_MOS_PIN, HIGH);
           ReleaseServo.write(RELEASE_PARACHUTE);
           pulseBeacon();
+          digitalWrite(BUZZER_MOS, HIGH);
+          digitalWrite(LED_MOS, HIGH);
+          CAM = ToggleOn;
+          
+          digitalWrite(CAM_TOGGLE_PIN, LOW);
+          delay(900);
+          digitalWrite(CAM_TOGGLE_PIN, HIGH);
+          
+
+          
           us.loopControl();
         }
 
@@ -781,6 +850,8 @@ void loop() {
         // Beacons
         digitalWrite(BUZZER_MOS, HIGH);
         digitalWrite(LED_MOS, HIGH);
+
+        digitalWrite(RELEASE_MOS_PIN, LOW);
         
       } else if (flightState == ABORT) {
         if (millis() - timeAbortEntered >= 250000) {
