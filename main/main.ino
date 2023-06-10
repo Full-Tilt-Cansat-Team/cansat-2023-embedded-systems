@@ -45,7 +45,7 @@ Servo FlagServo;
 #define FLAG_MOS_PIN 3
 
 // Beacon pins
-#define BUZZER_MOS 19
+#define BUZZER_MOS 20 //19
 #define LED_MOS 20
 
 // Backup Memory location
@@ -159,7 +159,7 @@ unsigned long cycleTimeGap; // Time between cycles
 unsigned long deltaTime; // How much time has passed between logic steps
 unsigned long timeAbortEntered; // When the abort stage was entered
 
-bool transmitting = false; // Are we transmitting packets?
+bool transmitting = true; // Are we transmitting packets?
 bool simulation = false; // Are we simulating?
 bool simulationArmed = false; // Required to enable simulation mode
 float simulatedPressure; // Whats the simulated pressure?
@@ -193,6 +193,7 @@ class UprightingSystem {
 
     void loopControl() {
       float a, b;
+      int iters = 0;
       digitalWrite(ORIENT_MOS_PIN, HIGH);
       while (true) {
 
@@ -217,8 +218,10 @@ class UprightingSystem {
         Serial.println(a);
         Serial.println("");
         delay(1000);
+
+        iters++;
         
-        if ((b >= 8.74 && b <= 9.8)) {
+        if ((iters >= 10 && b >= 8.0) || (b >= 8.6 && b <= 9.8) || (iters >= 20)) {
           digitalWrite(FLAG_MOS_PIN, HIGH);
           FlagServo.write(180);
           delay(5000);
@@ -1058,4 +1061,4 @@ const double T0 = 288.15;
 double pressureToAltitude(float p) {
   p *= 100;
   return T0 / lapse * (1 - pow(p / p0, R * lapse / (g * M)));
-};
+}
