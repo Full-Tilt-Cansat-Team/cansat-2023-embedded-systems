@@ -731,7 +731,7 @@ void loop() {
     // Read our voltage over the ADC
     adcVol = analogRead(ADC_GPIO_PIN);
     // ADC to V w/ Voltage Divider = (ADC Output / Maximum ADC Output) x Voltage Across R1
-    voltage = (3.3 * (float)adcVol / 1023) * ((50 + 47) / 50);
+    voltage = (6 * (float)adcVol / 1023) * ((50 + 47) / 50);
 
     // Poll serial chip for any new command data
     commander.addToBuffer(us);
